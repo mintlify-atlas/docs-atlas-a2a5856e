@@ -1,7 +1,7 @@
 ---
 title: "Products API: Inventory CRUD and Stock Management"
 sidebarTitle: "Products"
-description: "Create and manage inventory products in Kantuta POS, including barcode, pricing, stock levels, and category associations."
+description: "Create and manage inventory products in Kantuta POS — barcode, pricing, stock levels, minimum thresholds, and category associations via the REST API."
 ---
 
 Products are the core of the Kantuta POS inventory system. Each product tracks its sale price, purchase cost, current stock, minimum stock threshold, and the category it belongs to. All routes require a valid **Bearer Token JWT** in the `Authorization` header. The list endpoint returns only active products with the `categoria` object pre-loaded, so you have everything you need to display a full product listing without a second request.

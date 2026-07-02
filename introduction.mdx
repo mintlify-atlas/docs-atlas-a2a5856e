@@ -34,7 +34,7 @@ Kantuta POS is assembled from a carefully chosen set of libraries:
 - **React 19 + TypeScript** — strict typing throughout `src/types/` eliminates entire classes of runtime errors.
 - **Vite 6** — sub-second HMR in development; optimised production bundles via `tsc -b && vite build`.
 - **Axios 1.x** — all HTTP calls to the NestJS REST API, organised under `src/services/`.
-- **React Router 7** — file-based nested routing with layout nesting (`AppLayout`) and protected routes.
+- **React Router 7** — code-based nested routing with layout nesting (`AppLayout`) and protected routes.
 - **Socket.IO Client 4** — real-time event streaming; the `SocketContext` derives the WebSocket URL automatically from `VITE_API_BASE_URL`.
 - **ApexCharts + react-apexcharts** — interactive sales and inventory charts in the Reportes module.
 - **@react-pdf/renderer** — generates printable PDF reports directly in the browser.

@@ -1,7 +1,7 @@
 ---
 title: "Kantuta POS REST API: Base URL, Auth, and Conventions"
 sidebarTitle: "Overview"
-description: "Complete reference for the Kantuta POS NestJS REST API: base URL configuration, authentication conventions, public endpoints, token refresh, and all available modules."
+description: "Reference for the Kantuta POS NestJS REST API covering base URL setup, auth conventions, public endpoints, token refresh, and all ten feature modules."
 ---
 
 The Kantuta POS backend is a NestJS REST API that powers every operation in the React 19 + TypeScript frontend — from authentication and inventory management to sales, cash registers, and agent transactions. All communication happens over HTTP/HTTPS using JSON payloads, and most endpoints require a short-lived JWT access token delivered as a Bearer header.
@@ -61,7 +61,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Access tokens are short-lived. When any protected endpoint returns **HTTP 401**, the client should transparently exchange the stored `refresh_token` for a new `access_token` and replay the original request.
 
-```
+```text
 Client                              API
   |                                   |
   |--- PROTECTED REQUEST (expired) -->|
@@ -259,6 +259,16 @@ export interface SesionCaja extends BaseEntityAudit {
   id_caja: number;
   caja?: Caja;
   id_usuario: number;
+}
+
+export interface DetalleVenta extends BaseEntityAudit {
+  id: number;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal: number;
+  id_venta: number;
+  id_producto: number;
+  producto?: Producto;
 }
 
 export interface Venta extends BaseEntityAudit {

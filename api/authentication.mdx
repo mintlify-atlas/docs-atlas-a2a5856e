@@ -1,7 +1,7 @@
 ---
 title: "Authenticate with Kantuta POS: JWT Login and Token Refresh"
 sidebarTitle: "Authentication"
-description: "Learn how to sign in, refresh JWT access tokens, and complete the 3-step email-based password reset flow in the Kantuta POS API."
+description: "Learn how to sign in, refresh JWT access tokens, and execute the 3-step email-based password reset flow with the Kantuta POS NestJS API."
 ---
 
 Authentication in Kantuta POS is built on short-lived JWT **access tokens** and longer-lived **refresh tokens**. All auth endpoints live under the `/auth` prefix and are **public** — no existing token is required to call them. Once a user signs in, the access token must be sent as a Bearer header on every subsequent protected request.

@@ -1,7 +1,7 @@
 ---
 title: "How AuthContext Manages JWT Sessions in Kantuta POS"
 sidebarTitle: "Auth Context"
-description: "Deep-dive into AuthContextProvider: JWT storage, token expiry decoding, 45-minute inactivity auto-logout, and the useAuth() hook."
+description: "Deep-dive into AuthContextProvider: JWT storage, token expiry decoding, 45-minute inactivity auto-logout, and the exported useAuth() hook."
 ---
 
 `AuthContext` is the single source of truth for the authenticated session in Kantuta POS. It owns the JWT access token, the current user object, and two storage helpers — `loginStorage` and `logoutStorage` — that keep React state and `localStorage` in sync. It also runs an inactivity timer that automatically logs the user out after 45 minutes without any keyboard, mouse, or scroll activity.
@@ -101,7 +101,7 @@ function MyComponent() {
 On every page load, `AuthContextProvider` checks whether the stored `access_token` has already expired before restoring it into React state. The check manually decodes the JWT payload without any external library:
 
 ```typescript
-const isTokenExpired = (token: string | null): boolean => {
+const isTokenExpired = (token: string | null) => {
   if (!token) return true;
   try {
     // Decode the Base64url-encoded payload (middle segment of the JWT)
@@ -179,7 +179,7 @@ For component-level role checks, use the `useRole` hook instead of reading `user
 import { useRole } from '../hooks/useRole';
 
 function AdminOnlyPanel() {
-  const { isAdmin, hasRole } = useRole();
+  const { roleName, isAdmin, isOperator, hasRole } = useRole();
 
   if (!isAdmin) return null;
 

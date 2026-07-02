@@ -1,7 +1,7 @@
 ---
-title: "User Management and Role-Based Access Control"
+title: "User Management and Role-Based Access in Kantuta POS"
 sidebarTitle: "Users & Roles"
-description: "Manage system accounts, assign roles, and control route-level access for Administrador and Cajero users in Kantuta POS."
+description: "Manage system accounts, assign roles, and enforce route-level access control for Administrador and Cajero users across Kantuta POS."
 ---
 
 Kantuta POS enforces a two-tier role hierarchy: **Administrador** and **Cajero**. Every authenticated request carries a JWT that encodes the user's role, and the `ProtectedRoute` component intercepts navigation at the router level before any protected view renders. Administrators can create and edit user accounts through the `/administracion/usuarios` module; cashiers have no access to any administration routes.
@@ -63,6 +63,20 @@ The core data shapes for users and roles are defined across two files.
   <Tab title="Auth types">
     ```typescript
     // src/modules/Administracion/Usuarios/types/auth.type.ts
+
+    export interface UserPersona {
+      nombres: string;
+      p_apellido: string;
+      s_apellido: string;
+      fecha_nacimiento: string;
+      genero: string;
+    }
+
+    export interface UserRole {
+      id: number;
+      nombre: string;
+      descripcion?: string;
+    }
 
     export interface User {
       id: number;
@@ -153,13 +167,25 @@ The registration form calls `UsuariosService.registerUsuario(data)`, which posts
 ```typescript
 // src/modules/Administracion/Usuarios/services/usuariosService.ts
 
+const getHeaders = () => ({
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+});
+
 export const UsuariosService = {
   async registerUsuario(data: RegisterUsuarioRequest) {
     return await axios.post(`${API_BASE_URL}/usuario/register`, data, {
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-      },
+      headers: getHeaders(),
+    });
+  },
+  async updateUsuario(id: number, data: UpdateUsuarioRequest) {
+    return await axios.patch(`${API_BASE_URL}/usuario/${id}`, data, {
+      headers: getHeaders(),
+    });
+  },
+  async updatePersona(data: UpdatePersonaRequest) {
+    return await axios.put(`${API_BASE_URL}/persona`, data, {
+      headers: getHeaders(),
     });
   },
   // ...
@@ -277,11 +303,15 @@ useEffect(() => {
   resetTimer();
 
   const events = ["mousemove", "keydown", "scroll", "click"];
-  events.forEach((evt) => window.addEventListener(evt, resetTimer));
+  const handleActivity = () => {
+    resetTimer();
+  };
+
+  events.forEach((evt) => window.addEventListener(evt, handleActivity));
 
   return () => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current as any);
-    events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+    events.forEach((evt) => window.removeEventListener(evt, handleActivity));
   };
 }, []);
 ```

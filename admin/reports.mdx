@@ -1,5 +1,5 @@
 ---
-title: "Generate PDF Reports: Sales, Cash, Inventory, and Productivity"
+title: "PDF Reports: Sales, Cash, Inventory, and Productivity"
 sidebarTitle: "Reports"
 description: "Generate downloadable PDF reports for cash sessions, sales, purchases, stock levels, and operator productivity — all restricted to Administrador."
 ---
@@ -58,10 +58,10 @@ This two-step wizard walks the administrator from selecting a physical cash draw
   </Step>
 </Steps>
 
-The generated PDF uses the `CajaHistorialPdf` component structure — an A4 landscape-friendly document with a totals summary box that breaks down ingresos, egresos, and net cash flow:
+The generated PDF uses the `MovimientosCajaPdf` component — an A4 document with a totals summary box that breaks down ingresos, egresos, and net cash flow. The `CajaHistorialPdf` component shares the same data shape and is used for standalone historical extracts:
 
 ```typescript
-// src/components/pdf/CajaHistorialPdf.tsx (totals shape)
+// src/components/pdf/CajaHistorialPdf.tsx (data shape)
 
 // data.totales: { ingresos: number; egresos: number; neto: number }
 // data.movimientos: Array<{ id; fecha; id_sesion; tipo: "INGRESO"|"EGRESO"; motivo; monto }>
@@ -188,10 +188,21 @@ interface VentaData {
 export const TicketVentaPdf: React.FC<{ data: VentaData }> = ({ data }) => (
   <Document>
     <Page size="A5" style={styles.page}>
-      {/* Header: TICKET DE VENTA / Kantuta POS */}
-      {/* Info: Nro. Ticket, Fecha, Cajero, Método Pago, Estado */}
-      {/* Line items table: Producto / Cant. / P. Unit / Subtotal */}
-      {/* Footer: TOTAL: Bs. {total} */}
+      <View style={styles.header}>
+        <Text style={styles.title}>TICKET DE VENTA</Text>
+        <Text style={styles.subtitle}>Kantuta POS</Text>
+      </View>
+      <View style={styles.info}>
+        <Text>Nro. Ticket: {data.id}</Text>
+        <Text>Fecha: {new Date(data.fecha).toLocaleString()}</Text>
+        <Text>Cajero: {data.cajero}</Text>
+        <Text>Método Pago: {data.metodo_pago}</Text>
+        <Text>Estado: {data.estado_venta}</Text>
+      </View>
+      {/* Line items: Producto / Cant. / P. Unit / Subtotal */}
+      <View style={styles.totalBox}>
+        <Text>TOTAL: Bs. {data.total.toFixed(2)}</Text>
+      </View>
     </Page>
   </Document>
 );

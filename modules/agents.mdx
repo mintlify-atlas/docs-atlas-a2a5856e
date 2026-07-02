@@ -19,8 +19,9 @@ The module also integrates a **WhatsApp gateway** at `/whatsapp` — a QR-code-b
 Banking agent transactions are modelled around a `TransaccionAgente` record. The fields below represent the full shape of the entity as used throughout the module:
 
 ```typescript
-// TransaccionAgente — logical entity shape
-export interface TransaccionAgente {
+// TransaccionAgente — entity shape (extends BaseEntityAudit)
+// BaseEntityAudit provides: estado, id_user_create, id_user_update, created_at, updated_at
+export interface TransaccionAgente extends BaseEntityAudit {
   id: number;
   banco: string;                           // Free-text bank name (e.g. "BCP", "Tigo Money")
   tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
@@ -28,23 +29,19 @@ export interface TransaccionAgente {
   comision_cliente: number;                // Fee charged to the customer in Bs.
   comision_banco: number;                  // Fee paid back by the bank in Bs.
   nro_referencia: string;                  // Unique bank-issued reference code
+  url_comprobante: string | null;          // Optional receipt/voucher URL
+  fecha: string;                           // Transaction timestamp (ISO string)
   id_sesion_caja: number;
-  estado: boolean;                         // false = soft-deleted
-  id_user_create: number;
-  id_user_update?: number;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface CrearTransaccionAgenteRequest {
   banco: string;
   tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
   monto: number;
-  comision_cliente: number;
-  comision_banco: number;
+  comision_cliente?: number;               // Optional fee charged to the customer in Bs.
   nro_referencia: string;
   id_sesion_caja: number;
-  id_user_create?: number;
+  id_user_create: number;
 }
 ```
 

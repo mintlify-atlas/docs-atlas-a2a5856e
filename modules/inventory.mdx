@@ -150,7 +150,7 @@ export interface CrearCompraRequest {
 
 ### How Stock is Updated
 
-When a purchase is confirmed (`POST /inventario/compras`), the backend iterates every `DetalleCompraInput` and adds `cantidad` to the corresponding product's `stock_actual`. No manual stock adjustment is needed.
+When a purchase is confirmed (`POST /compras`), the backend iterates every `DetalleCompraInput` and adds `cantidad` to the corresponding product's `stock_actual`. No manual stock adjustment is needed.
 
 ### Paying with the Cash Register
 
@@ -187,10 +187,10 @@ Toggling **"Pagar en efectivo (desde Caja POS)"** sets `pagar_con_caja: true` an
   | Action | Route |
   |---|---|
   | Create product | `/inventario/productos/registrar` |
-  | Edit product | `/inventario/productos/editar/:id` |
+  | Edit product | `/inventario/productos/editar/:id_producto` |
   | Delete product | Button on `/inventario/productos` |
   | Create category | `/inventario/categorias/registrar` |
-  | Edit category | `/inventario/categorias/editar/:id` |
+  | Edit category | `/inventario/categorias/editar/:id_categoria` |
   | Delete category | Button on `/inventario/categorias` |
 
   Route protection is enforced at the React Router level via a `ProtectedRoute allowedRoles={['Administrador']}` wrapper. The edit and delete buttons are also hidden in the UI for non-admin users via the `useRole()` hook's `isAdmin` flag.
@@ -204,7 +204,7 @@ Toggling **"Pagar en efectivo (desde Caja POS)"** sets `pagar_con_caja: true` an
 |---|---|
 | Product catalog | `/inventario/productos` |
 | Register product *(Admin)* | `/inventario/productos/registrar` |
-| Edit product *(Admin)* | `/inventario/productos/editar/:id` |
+| Edit product *(Admin)* | `/inventario/productos/editar/:id_producto` |
 | Category list | `/inventario/categorias` |
 | Register category *(Admin)* | `/inventario/categorias/registrar` |
 | Purchase history | `/inventario/compras` |

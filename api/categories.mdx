@@ -1,7 +1,7 @@
 ---
 title: "Categories API: Create, List, Update, and Delete"
 sidebarTitle: "Categories"
-description: "Manage product categories in Kantuta POS. Create, retrieve, update, and soft-delete categories that group your inventory items."
+description: "Manage product categories in Kantuta POS. Create, retrieve, update, and soft-delete the groups that organize your entire inventory catalog."
 ---
 
 Categories are the top-level grouping for all inventory items in Kantuta POS. Every product must belong to a category, so managing categories is a prerequisite for building out your product catalog. All routes require a valid **Bearer Token JWT** in the `Authorization` header. The list endpoint automatically filters out inactive (soft-deleted) categories, so only records with `estado: true` are returned.

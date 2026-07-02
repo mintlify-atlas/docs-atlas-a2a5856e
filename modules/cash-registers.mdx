@@ -35,12 +35,9 @@ Each caja is configured with one of three `especialidad` values that determine w
 
 ```typescript
 // src/modules/Cajas/interfaces/Caja.ts
-export interface Caja {
-  id: number;
-  nombre: string;
-  especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
-  sesiones?: SesionCaja[];
-  saldo: number;
+
+// Shared audit fields inherited by all entities below
+export interface BaseEntityAudit {
   estado: boolean;
   id_user_create: number | null;
   id_user_update?: number | null;
@@ -48,7 +45,15 @@ export interface Caja {
   updated_at: string;
 }
 
-export interface SesionCaja {
+export interface Caja extends BaseEntityAudit {
+  id: number;
+  nombre: string;
+  especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
+  sesiones?: SesionCaja[];
+  saldo: number;
+}
+
+export interface SesionCaja extends BaseEntityAudit {
   id: number;
   monto_inicial: number;
   monto_final_teorico: number | null;  // Computed by the backend on close
@@ -60,12 +65,9 @@ export interface SesionCaja {
   id_caja: number;
   caja?: Caja;
   id_usuario: number;
-  estado: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
-export interface MovimientoCaja {
+export interface MovimientoCaja extends BaseEntityAudit {
   id: number;
   tipo: "INGRESO" | "EGRESO";
   monto: number;

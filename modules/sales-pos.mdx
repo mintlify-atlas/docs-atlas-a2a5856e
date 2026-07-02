@@ -72,7 +72,7 @@ export interface ActualizarVentaRequest {
     | Value | Label |
     |---|---|
     | `EFECTIVO` | Efectivo (cash) |
-    | `QR` | Pago QR / Transferencia |
+    | `QR` | Pago QR (scan from mobile wallet) |
     | `TRANSFERENCIA` | Transferencia Bancaria |
   </Step>
   <Step title="Confirm the sale">
@@ -81,8 +81,8 @@ export interface ActualizarVentaRequest {
     - Products are re-fetched to reflect the updated stock.
     - A success modal opens showing the ticket summary (items, method, session ID, and total).
   </Step>
-  <Step title="Download the ticket PDF">
-    After the sale modal appears, the operator can navigate to `/ventas` (the history list) where a per-sale PDF ticket is available via `GET /reportes/data/producto/:id` rendered with `@react-pdf/renderer`.
+  <Step title="View the sale history">
+    After the sale modal closes, the operator can navigate to `/ventas` (the history list) to review the completed transaction alongside all previous sales.
   </Step>
 </Steps>
 

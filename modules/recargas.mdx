@@ -125,15 +125,7 @@ export interface CreateInyeccionDto {
 
 ## SaldosCards Component
 
-The `SaldosCards` component renders a balance card for each operator retrieved from `GET /recargas/operadoras/saldos`. Cards use a color-coded status system:
-
-| Condition | Status label | Visual indicator |
-|---|---|---|
-| `saldo_actual >= 100` | Disponible | Green border & badge |
-| `50 <= saldo_actual < 100` | Liquidez Baja | Amber border & badge |
-| `saldo_actual < 50` | Crítico — Inyectar | Red border & badge (animated pulse) |
-
-Each card also shows the carrier's commission percentage (`comision_porcentaje`) and uses a brand color on the left border (blue for Tigo, orange for Entel, green for Viva).
+The `SaldosCards` component renders a balance card for each operator retrieved from `GET /recargas/operadoras/saldos`. Each card displays the operator name, the current `saldo_actual` formatted in Bolivianos, and a brand-colored background: blue for Tigo, orange for Entel, and green for Viva.
 
 ---
 

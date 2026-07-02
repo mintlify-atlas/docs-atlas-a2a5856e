@@ -1,7 +1,7 @@
 ---
 title: "Recargas API: Mobile Top-Ups and Operator Balance Injections"
 sidebarTitle: "Recargas"
-description: "Top up customer mobile lines and inject operator balances for Tigo, Entel, and Viva through the Kantuta POS Recargas API, linked to active cashier sessions."
+description: "Top up customer mobile lines and inject operator balances for Tigo, Entel, and Viva via the Kantuta POS Recargas API, linked to cashier sessions."
 ---
 
 The Recargas module handles two distinct operations: **client top-ups** (`RecargaCliente`) — where a customer's mobile number is recharged from the corresponding operator's available balance — and **operator balance injections** (`InyeccionOperadora`) — where new airtime credit is loaded into an operator's pool to replenish depleted stock. Both operations are tied to an active `SesionCaja` and tracked with full audit history. The `OperadoraSaldo` resource lets you query each operator's current available balance before processing a top-up.
@@ -71,7 +71,7 @@ export interface CreateInyeccionDto {
 
 <CodeGroup>
 ```bash curl
-curl -X GET https://api.kantuta.com/recargas/operadoras/saldos \
+curl -X GET http://localhost:3000/recargas/operadoras/saldos \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -130,7 +130,7 @@ export const getSaldos = async (): Promise<OperadoraSaldo[]> => {
 
 <CodeGroup>
 ```bash curl
-curl -X POST https://api.kantuta.com/recargas/cliente \
+curl -X POST http://localhost:3000/recargas/cliente \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -188,7 +188,7 @@ const recarga = await createRecargaCliente({
 
 <CodeGroup>
 ```bash curl
-curl -X POST https://api.kantuta.com/recargas/inyeccion \
+curl -X POST http://localhost:3000/recargas/inyeccion \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -235,7 +235,7 @@ const inyeccion = await createInyeccion({
 
 <CodeGroup>
 ```bash curl
-curl -X GET https://api.kantuta.com/recargas/historial/clientes \
+curl -X GET http://localhost:3000/recargas/historial/clientes \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -262,7 +262,7 @@ export const getHistorialClientes = async (): Promise<RecargaCliente[]> => {
 
 <CodeGroup>
 ```bash curl
-curl -X GET https://api.kantuta.com/recargas/historial/inyecciones \
+curl -X GET http://localhost:3000/recargas/historial/inyecciones \
   -H "Authorization: Bearer <access_token>"
 ```
 
