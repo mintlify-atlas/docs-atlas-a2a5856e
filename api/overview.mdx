@@ -1,0 +1,288 @@
+---
+title: "Kantuta POS REST API: Base URL, Auth, and Conventions"
+sidebarTitle: "Overview"
+description: "Complete reference for the Kantuta POS NestJS REST API: base URL configuration, authentication conventions, public endpoints, token refresh, and all available modules."
+---
+
+The Kantuta POS backend is a NestJS REST API that powers every operation in the React 19 + TypeScript frontend — from authentication and inventory management to sales, cash registers, and agent transactions. All communication happens over HTTP/HTTPS using JSON payloads, and most endpoints require a short-lived JWT access token delivered as a Bearer header.
+
+## Base URL
+
+The frontend resolves the API origin from the `VITE_API_BASE_URL` environment variable. If the variable is absent (for example, during local development), it falls back to `http://localhost:3000`.
+
+```typescript
+// src/components/auth/services/urlBase.ts
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+```
+
+Set the variable in your `.env` file at the project root:
+
+```bash
+# .env
+VITE_API_BASE_URL=https://api.kantuta-pos.example.com
+```
+
+<Note>
+  Vite only exposes variables prefixed with `VITE_` to client-side code. Never
+  store secrets in `.env` files that are committed to version control.
+</Note>
+
+## Request Conventions
+
+| Convention | Value |
+|---|---|
+| **Content-Type** | `application/json` for all requests that include a body |
+| **Authentication** | `Authorization: Bearer <access_token>` header |
+| **Date format** | ISO 8601 strings — e.g. `"2024-07-15T10:30:00.000Z"` |
+| **Soft deletes** | Resources are never permanently removed; `estado` is set to `false` |
+
+## Authentication Overview
+
+Most endpoints are protected and require a valid JWT access token. Endpoints that do not require a token are marked **[PUBLIC]** throughout this reference.
+
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+### Public Endpoints (no token required)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/auth/login` | Sign in and receive tokens |
+| `POST` | `/auth/refresh_token` | Exchange a refresh token for a new access token |
+| `POST` | `/auth/reset/code` | Request a 6-char password-reset code via email |
+| `POST` | `/auth/confirm-code` | Verify the 6-char reset code |
+| `POST` | `/auth/reset-confirm` | Set the new password after code verification |
+| `POST` | `/usuario/register` | Register a new user and their persona record |
+| `POST` | `/mail` | Send a general-purpose email |
+
+## Token Refresh Flow
+
+Access tokens are short-lived. When any protected endpoint returns **HTTP 401**, the client should transparently exchange the stored `refresh_token` for a new `access_token` and replay the original request.
+
+```
+Client                              API
+  |                                   |
+  |--- PROTECTED REQUEST (expired) -->|
+  |<-- 401 Unauthorized --------------|
+  |                                   |
+  |--- POST /auth/refresh_token ----->|  (Authorization: Bearer <refresh_token>)
+  |<-- { access_token } -------------|
+  |                                   |
+  |--- RETRY ORIGINAL REQUEST ------->|  (Authorization: Bearer <new access_token>)
+  |<-- 200 OK ------------------------|
+```
+
+If the refresh token itself is expired or invalid, the user must sign in again. The Axios response interceptor below handles this automatically.
+
+## Axios Instance Setup
+
+The frontend uses a shared Axios instance with two interceptors — one that injects the current `access_token` on every outgoing request, and one that catches `401` responses and attempts a token refresh before retrying.
+
+```typescript
+import axios from "axios";
+
+// 1. Create the Axios instance
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000",
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+// 2. Request interceptor — inject the access token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("access_token");
+    if (token && config.headers) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error),
+);
+
+// 3. Response interceptor — refresh token on 401
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      try {
+        const refreshToken = localStorage.getItem("refresh_token");
+
+        // Use a plain axios call to avoid triggering this interceptor again
+        const res = await axios.post(
+          `${import.meta.env.VITE_API_BASE_URL || "http://localhost:3000"}/auth/refresh_token`,
+          {},
+          {
+            headers: { Authorization: `Bearer ${refreshToken}` },
+          },
+        );
+
+        const newAccessToken = res.data.access_token;
+        localStorage.setItem("access_token", newAccessToken);
+
+        // Replay the original request with the new token
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        return api(originalRequest);
+      } catch (refreshError) {
+        // Refresh token expired — force sign-out
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+        window.location.href = "/signin";
+        return Promise.reject(refreshError);
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
+export default api;
+```
+
+<Tip>
+  Import `api` from this module instead of importing `axios` directly. Every
+  call made through `api` automatically includes the authorization header and
+  benefits from transparent token renewal.
+</Tip>
+
+## API Modules
+
+The backend is organized into ten feature modules, each rooted at its own path prefix.
+
+| Module | Base Path | Auth Required |
+|---|---|---|
+| Authentication | `/auth` | Partial — see [Public Endpoints](#public-endpoints-no-token-required) |
+| Categories | `/inventario/categorias` | ✅ Yes |
+| Products | `/inventario/producto` | ✅ Yes |
+| Purchases | `/compras` | ✅ Yes |
+| Cajas (Cash Registers) | `/cajas` | ✅ Yes |
+| Sales | `/ventas` | ✅ Yes |
+| Agentes (Agent Transactions) | `/agentes` | ✅ Yes |
+| Personas | `/persona` | ✅ Yes |
+| Users | `/usuario` | Partial — `/usuario/register` is public |
+| Mail | `/mail` | ❌ Public |
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Login, token refresh, and the full 3-step password reset flow.
+  </Card>
+  <Card title="Inventory" icon="box" href="/api/categories">
+    Manage product categories and the product catalog with stock tracking.
+  </Card>
+  <Card title="Sales & Purchases" icon="receipt" href="/api/sales">
+    Register sales with multiple payment methods and record supplier stock purchases.
+  </Card>
+  <Card title="Cash Registers" icon="cash-register" href="/api/cash-registers">
+    Open and close register sessions, record internal cash movements, and run end-of-shift reconciliation.
+  </Card>
+  <Card title="Agent Transactions" icon="building-columns" href="/api/agents">
+    Log Tigo Money, QR transfer, and banking agent operations tied to a register session.
+  </Card>
+  <Card title="Users & Personas" icon="users" href="/api/users">
+    Create and manage user accounts alongside their linked persona records.
+  </Card>
+</CardGroup>
+
+## Global TypeScript Interfaces
+
+These shared interfaces are used as return types and nested objects across all modules. Copy them into `src/types/api.d.ts` in your project.
+
+```typescript
+export interface BaseEntityAudit {
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string; // ISO Date String
+  updated_at: string; // ISO Date String
+}
+
+export interface Role {
+  id: number;
+  nombre: "admin" | "user" | string;
+  descripcion?: string;
+}
+
+export interface Persona extends BaseEntityAudit {
+  id: number;
+  nombres: string;
+  p_apellido: string;
+  s_apellido?: string;
+  fecha_nacimiento: string; // YYYY-MM-DD
+  genero: string; // e.g. 'M', 'F'
+}
+
+export interface Usuario extends BaseEntityAudit {
+  id: number;
+  name: string;
+  email: string;
+  persona: Persona;
+  role: Role;
+}
+
+export interface Categoria extends BaseEntityAudit {
+  id: number;
+  nombre: string;
+  productos?: Producto[];
+}
+
+export interface Producto extends BaseEntityAudit {
+  id: number;
+  nombre: string;
+  codigo_barras: string | null;
+  precio_venta: number;
+  costo_compra: number;
+  stock_actual: number;
+  stock_minimo: number;
+  categoria: Categoria;
+}
+
+export interface Caja extends BaseEntityAudit {
+  id: number;
+  nombre: string;
+  especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
+  sesiones?: SesionCaja[];
+}
+
+export interface SesionCaja extends BaseEntityAudit {
+  id: number;
+  monto_inicial: number;
+  monto_final_teorico: number | null;
+  monto_final_real: number | null;
+  diferencia: number | null;
+  estado_sesion: "ABIERTA" | "CERRADA";
+  fecha_apertura: string;
+  fecha_cierre: string | null;
+  id_caja: number;
+  caja?: Caja;
+  id_usuario: number;
+}
+
+export interface Venta extends BaseEntityAudit {
+  id: number;
+  total: number;
+  metodo_pago: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+  fecha: string;
+  id_sesion_caja: number;
+  estado_venta: "COMPLETADA" | "ANULADA" | "EDITADA";
+  motivo_edicion: string | null;
+  fecha_modificacion: string;
+  detalles: DetalleVenta[];
+}
+
+export interface TransaccionAgente extends BaseEntityAudit {
+  id: number;
+  banco: string;
+  tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
+  monto: number;
+  comision_cliente: number;
+  comision_banco: number;
+  nro_referencia: string;
+  url_comprobante: string | null;
+  fecha: string;
+  id_sesion_caja: number;
+}
+```

@@ -1,0 +1,315 @@
+---
+title: "Kantuta POS API Data Models and TypeScript Interfaces"
+sidebarTitle: "Data Models"
+description: "Complete TypeScript interface reference for all Kantuta POS API entities — base types, inventory, operations, agents, and recargas — organized for quick lookup."
+---
+
+This page is a comprehensive reference for every TypeScript interface used across the Kantuta POS API. All models are ready to copy into your `src/types/api.d.ts` file. The interfaces are grouped by domain to make cross-module relationships easier to trace.
+
+<Note>
+  Every entity model in Kantuta POS extends `BaseEntityAudit`. This base interface provides soft-delete support (`estado`), full audit trails (`id_user_create`, `id_user_update`), and automatic timestamps (`created_at`, `updated_at`). You will never receive a database record that lacks these five fields.
+</Note>
+
+---
+
+## Base Types
+
+<Accordion title="BaseEntityAudit">
+  The root audit interface inherited by every entity in the system. The `estado` field drives soft deletes — when `false`, the record is considered inactive and is filtered out of standard list queries.
+
+  ```typescript
+  export interface BaseEntityAudit {
+    estado: boolean;            // false = soft-deleted / inactive
+    id_user_create: number | null;
+    id_user_update?: number | null;
+    created_at: string;         // ISO 8601 Date String
+    updated_at: string;         // ISO 8601 Date String
+  }
+  ```
+</Accordion>
+
+<Accordion title="Role">
+  Represents a system role assigned to a `Usuario`. The `nombre` field controls access permissions throughout the POS. Current supported values are `"admin"` and `"user"`, though the backend accepts any string for custom roles.
+
+  ```typescript
+  export interface Role {
+    id: number;
+    nombre: "admin" | "user" | string;
+    descripcion?: string;
+  }
+  ```
+</Accordion>
+
+<Accordion title="Persona">
+  Stores the personal identity data for every individual in the system. Each `Usuario` is linked to exactly one `Persona`. The `fecha_nacimiento` field must always be in `YYYY-MM-DD` format.
+
+  ```typescript
+  export interface Persona extends BaseEntityAudit {
+    id: number;
+    nombres: string;
+    p_apellido: string;
+    s_apellido?: string;
+    fecha_nacimiento: string; // Format: "YYYY-MM-DD"
+    genero: string;           // "M" or "F"
+  }
+  ```
+</Accordion>
+
+<Accordion title="Usuario">
+  The system account model. Each user holds credentials (`email`/`password` — password is never returned in responses), a display `name`, a linked `Persona`, and an assigned `Role`.
+
+  ```typescript
+  export interface Usuario extends BaseEntityAudit {
+    id: number;
+    name: string;     // Display name shown in the POS UI
+    email: string;
+    persona: Persona;
+    role: Role;
+  }
+  ```
+</Accordion>
+
+---
+
+## Inventory
+
+<Accordion title="Categoria">
+  Groups products into logical categories. The `productos` relation is optional and is only populated when fetching a category with its associated items.
+
+  ```typescript
+  export interface Categoria extends BaseEntityAudit {
+    id: number;
+    nombre: string;
+    productos?: Producto[];
+  }
+  ```
+</Accordion>
+
+<Accordion title="Producto">
+  Represents a sellable item in the store's inventory. The `stock_actual` decreases on each sale and increases on each purchase. When `stock_actual` falls below `stock_minimo`, the UI should surface a low-stock alert.
+
+  ```typescript
+  export interface Producto extends BaseEntityAudit {
+    id: number;
+    nombre: string;
+    codigo_barras: string | null;
+    precio_venta: number;   // Selling price (>= 0)
+    costo_compra: number;   // Purchase cost (>= 0)
+    stock_actual: number;   // Current on-hand quantity
+    stock_minimo: number;   // Low-stock threshold
+    categoria: Categoria;   // Always pre-loaded on list and detail queries
+  }
+  ```
+</Accordion>
+
+---
+
+## Operations
+
+<Accordion title="Caja">
+  A physical point-of-sale terminal. The `especialidad` field restricts which transaction types the register can process. A `SOLO_VENTAS` register cannot record agent operations; a `SOLO_AGENTES` register cannot record product sales. `MIXTA` has no restrictions.
+
+  ```typescript
+  export interface Caja extends BaseEntityAudit {
+    id: number;
+    nombre: string;
+    especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
+    sesiones?: SesionCaja[]; // Full session history — populated on detail fetch
+    saldo: number;
+  }
+  ```
+</Accordion>
+
+<Accordion title="SesionCaja">
+  Represents a single cashier shift. Opened with a declared `monto_inicial` and closed with the cashier's physical count (`monto_final_real`). On close, the backend computes `monto_final_teorico` and `diferencia` for reconciliation. A session must be `"ABIERTA"` before any sales, agent transactions, or movements can be recorded.
+
+  ```typescript
+  export interface SesionCaja extends BaseEntityAudit {
+    id: number;
+    monto_inicial: number;
+    monto_final_teorico: number | null; // Backend-computed on close
+    monto_final_real: number | null;    // Cashier's physical count
+    diferencia: number | null;          // monto_final_real - monto_final_teorico
+    estado_sesion: "ABIERTA" | "CERRADA";
+    fecha_apertura: string;             // ISO Date String
+    fecha_cierre: string | null;        // ISO Date String — null while open
+    id_caja: number;
+    caja?: Caja;
+    id_usuario: number;
+  }
+  ```
+</Accordion>
+
+<Accordion title="MovimientoCaja">
+  Records any ad-hoc cash flow within a session that is not a sale, purchase, or agent transaction. Common examples include adding change float (`INGRESO`) or paying a utility bill (`EGRESO`). All movements are included in the theoretical balance calculation at session close.
+
+  ```typescript
+  export interface MovimientoCaja extends BaseEntityAudit {
+    id: number;
+    tipo: "INGRESO" | "EGRESO";
+    monto: number;   // Minimum 0.10
+    motivo: string;
+    fecha: string;   // ISO Date String
+    id_sesion_caja: number;
+  }
+  ```
+</Accordion>
+
+<Accordion title="Venta and DetalleVenta">
+  `Venta` is the sale header; `DetalleVenta` contains line items. Creating a sale automatically decrements `stock_actual` for each product in the `detalles` array and computes all `subtotal` and `total` values server-side.
+
+  ```typescript
+  export interface DetalleVenta extends BaseEntityAudit {
+    id: number;
+    cantidad: number;
+    precio_unitario: number;
+    subtotal: number;          // Computed: cantidad × precio_unitario
+    id_venta: number;
+    id_producto: number;
+    producto?: Producto;
+  }
+
+  export interface Venta extends BaseEntityAudit {
+    id: number;
+    total: number;
+    metodo_pago: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+    fecha: string;             // ISO Date String
+    id_sesion_caja: number;
+    estado_venta: "COMPLETADA" | "ANULADA" | "EDITADA";
+    motivo_edicion: string | null;
+    fecha_modificacion: string; // ISO Date String
+    detalles: DetalleVenta[];
+  }
+  ```
+</Accordion>
+
+<Accordion title="Compra and DetalleCompra">
+  `Compra` records stock restocking from a supplier. Setting `pagado_con_caja: true` on creation automatically registers an `EGRESO` movement against the linked session. Stock levels and `costo_compra` for each product are updated automatically.
+
+  ```typescript
+  export interface DetalleCompra extends BaseEntityAudit {
+    id: number;
+    cantidad: number;
+    costo_unitario: number;
+    subtotal: number;        // Computed: cantidad × costo_unitario
+    id_producto: number;
+    producto?: Producto;
+  }
+
+  export interface Compra extends BaseEntityAudit {
+    id: number;
+    total: number;
+    proveedor: string | null;
+    pagado_con_caja: boolean;
+    id_sesion_caja: number | null; // Required when pagado_con_caja is true
+    fecha: string;                 // ISO Date String
+    detalles: DetalleCompra[];
+  }
+  ```
+</Accordion>
+
+---
+
+## Agents & Recargas
+
+<Accordion title="TransaccionAgente">
+  Records a single banking agent operation — deposit, withdrawal, or QR transfer. The `banco` field is free text. Both client-facing and bank-side commissions are tracked. All transactions are linked to an active session and support soft delete for voiding.
+
+  ```typescript
+  export interface TransaccionAgente extends BaseEntityAudit {
+    id: number;
+    banco: string;                                         // Free text: "BCP", "TIGO_MONEY", etc.
+    tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
+    monto: number;
+    comision_cliente: number;
+    comision_banco: number;
+    nro_referencia: string;
+    url_comprobante: string | null;
+    fecha: string;            // ISO Date String
+    id_sesion_caja: number;
+  }
+  ```
+</Accordion>
+
+<Accordion title="OperadoraSaldo">
+  Tracks the available credit balance for each mobile operator (Tigo, Entel, Viva). Checked before processing a client top-up to confirm there is sufficient balance in the pool to fulfill the recharge request.
+
+  ```typescript
+  export enum OperadoraNombre {
+    TIGO  = "Tigo",
+    ENTEL = "Entel",
+    VIVA  = "Viva",
+  }
+
+  export interface OperadoraSaldo {
+    id: number;
+    nombre_operadora: OperadoraNombre;
+    saldo_actual: number | string;
+    estado: boolean;
+    created_at: string; // ISO Date String
+    updated_at: string; // ISO Date String
+  }
+  ```
+
+  <Note>
+    `OperadoraSaldo` does not extend `BaseEntityAudit` — it has its own `estado`, `created_at`, and `updated_at` but does not carry `id_user_create` or `id_user_update`.
+  </Note>
+</Accordion>
+
+<Accordion title="RecargaCliente">
+  Records a completed mobile top-up for an end customer. The `monto` is deducted from the matching operator's `OperadoraSaldo.saldo_actual`. The `estado` flag supports soft-delete for reversals.
+
+  ```typescript
+  export interface RecargaCliente {
+    id: number;
+    operadora: OperadoraNombre;
+    numero_cliente: string;
+    monto: number | string;
+    fecha_hora: string;       // ISO Date String
+    id_caja_sesion: number;
+    caja_sesion?: SesionCaja;
+    estado: boolean;
+  }
+  ```
+</Accordion>
+
+<Accordion title="InyeccionOperadora">
+  Records a balance injection — credit loaded into an operator's pool from the POS. The source cash session (`id_caja_origen`) is debited to reflect the outflow of funds used to purchase the airtime credit.
+
+  ```typescript
+  export interface InyeccionOperadora {
+    id: number;
+    operadora_destino: OperadoraNombre;
+    monto: number | string;
+    fecha_hora: string;      // ISO Date String
+    id_caja_origen: number;
+    caja_origen?: SesionCaja;
+    estado: boolean;
+  }
+  ```
+</Accordion>
+
+---
+
+## Entity Relationship Summary
+
+```
+BaseEntityAudit
+├── Categoria
+│   └── Producto[]
+├── Caja
+│   └── SesionCaja[]
+│       ├── MovimientoCaja[]
+│       ├── Venta[]
+│       │   └── DetalleVenta[]  →  Producto
+│       ├── Compra[]
+│       │   └── DetalleCompra[]  →  Producto
+│       ├── TransaccionAgente[]
+│       ├── RecargaCliente[]
+│       └── InyeccionOperadora[]
+└── Usuario
+    ├── Persona
+    └── Role
+```
+
+Every `SesionCaja` is the central hub for a cashier shift. All financial operations — sales, purchases, agent transactions, recargas, and cash movements — are anchored to a session, making it the primary unit for reporting and reconciliation.

@@ -1,0 +1,203 @@
+---
+title: "Process Mobile Top-Ups and Operator Balance Injections"
+sidebarTitle: "Recargas"
+description: "Sell prepaid mobile top-ups to customers and inject wholesale balance into Tigo, Entel, and Viva operator pools."
+---
+
+The Recargas module lets your staff sell prepaid mobile credit (recargas) to customers and manage the underlying operator balances that fund those sales. Supported carriers are **Tigo**, **Entel**, and **Viva** — represented by the `OperadoraNombre` enum. There are two distinct operations: a **Recarga Cliente** (retail top-up) decrements the operator's virtual balance pool, and an **Inyección Operadora** (wholesale balance injection) replenishes that pool from the active cash register.
+
+<Warning>
+  Both operations require an **active cash-register session**. If `CajaContext.sesionActiva` is `null`, the `/recargas/operacion` page renders a blocking message with a link to open a shift at `/cajas`.
+</Warning>
+
+---
+
+## Core Types
+
+```typescript
+// src/modules/Recargas/types/index.ts
+export enum OperadoraNombre {
+  TIGO  = 'Tigo',
+  ENTEL = 'Entel',
+  VIVA  = 'Viva',
+}
+
+export interface OperadoraSaldo {
+  id: number;
+  nombre_operadora: OperadoraNombre;
+  saldo_actual: number | string;
+  estado: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecargaCliente {
+  id: number;
+  operadora: OperadoraNombre;
+  numero_cliente: string;
+  monto: number | string;
+  fecha_hora: string;
+  id_caja_sesion: number;
+  caja_sesion?: any;
+  estado: boolean;
+}
+
+export interface InyeccionOperadora {
+  id: number;
+  operadora_destino: OperadoraNombre;
+  monto: number | string;
+  fecha_hora: string;
+  id_caja_origen: number;
+  caja_origen?: any;
+  estado: boolean;
+}
+
+export interface CreateRecargaClienteDto {
+  operadora: OperadoraNombre | '';
+  numero_cliente: string;    // Customer's phone number (e.g. "70712345")
+  monto: number;
+  id_caja_sesion: number;
+}
+
+export interface CreateInyeccionDto {
+  operadora_destino: OperadoraNombre | '';
+  monto: number;
+  id_caja_sesion: number;
+}
+```
+
+---
+
+## Operations
+
+<Tabs>
+  <Tab title="Recarga Cliente (Top-Up)">
+    Sell prepaid mobile credit to a customer. The operator's virtual balance (`saldo_actual`) is decremented by `monto`. The cash-register session receives a corresponding INGRESO.
+
+    **Required fields:**
+    | Field | Type | Description |
+    |---|---|---|
+    | `operadora` | `OperadoraNombre` | Target carrier: `Tigo`, `Entel`, or `Viva`. |
+    | `numero_cliente` | `string` | Customer's mobile phone number. |
+    | `monto` | `number` | Top-up amount in Bolivianos. |
+    | `id_caja_sesion` | `number` | ID of the currently open cash-register session. |
+
+    **Validation:** The form checks whether `monto > saldo_actual` for the selected operator. If so, an inline warning banner appears and the submit button is disabled until the operator's balance is sufficient.
+
+    ```typescript
+    // POST /recargas/cliente
+    const payload: CreateRecargaClienteDto = {
+      operadora: OperadoraNombre.TIGO,
+      numero_cliente: "70712345",
+      monto: 20,
+      id_caja_sesion: sesionActiva.id,
+    };
+    await RecargasService.createRecargaCliente(payload);
+    ```
+  </Tab>
+  <Tab title="Inyección Operadora (Wholesale Injection)">
+    Replenish a carrier's virtual credit pool with funds from the physical cash register. The session's cash balance decreases (EGRESO) and the operator's `saldo_actual` increases.
+
+    **Required fields:**
+    | Field | Type | Description |
+    |---|---|---|
+    | `operadora_destino` | `OperadoraNombre` | Target carrier to receive the balance. |
+    | `monto` | `number` | Amount to inject in Bolivianos. |
+    | `id_caja_sesion` | `number` | ID of the currently open cash-register session. |
+
+    <Note>
+      There is no `numero_cliente` on an injection — this is a B2B wholesale operation between the POS and the carrier, not a retail sale.
+    </Note>
+
+    ```typescript
+    // POST /recargas/inyeccion
+    const payload: CreateInyeccionDto = {
+      operadora_destino: OperadoraNombre.ENTEL,
+      monto: 200,
+      id_caja_sesion: sesionActiva.id,
+    };
+    await RecargasService.createInyeccion(payload);
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## SaldosCards Component
+
+The `SaldosCards` component renders a balance card for each operator retrieved from `GET /recargas/operadoras/saldos`. Cards use a color-coded status system:
+
+| Condition | Status label | Visual indicator |
+|---|---|---|
+| `saldo_actual >= 100` | Disponible | Green border & badge |
+| `50 <= saldo_actual < 100` | Liquidez Baja | Amber border & badge |
+| `saldo_actual < 50` | Crítico — Inyectar | Red border & badge (animated pulse) |
+
+Each card also shows the carrier's commission percentage (`comision_porcentaje`) and uses a brand color on the left border (blue for Tigo, orange for Entel, green for Viva).
+
+---
+
+## RecargasOperacion Page
+
+The main operations page at `/recargas/operacion` is composed from three blocks:
+
+<Steps>
+  <Step title="SaldosCards">
+    Displays current virtual balances for all three operators fetched via `RecargasService.getSaldos()`. Refreshes after every successful transaction.
+  </Step>
+  <Step title="FormRecargaCliente">
+    Left-panel form. Renders a carrier selector, phone number field, amount input with quick-select buttons (Bs. 10 / 20 / 50 / 100), and a submit button that calls `RecargasService.createRecargaCliente()`.
+  </Step>
+  <Step title="FormInyeccionMayorista">
+    Right-panel form. Renders a carrier selector, amount input, a reference/justification field, and a submit button that calls `RecargasService.createInyeccion()`.
+  </Step>
+</Steps>
+
+---
+
+## History Pages
+
+Completed records are available in two separate history views:
+
+| Page | Route | Data source |
+|---|---|---|
+| Client top-up history | `/recargas/historial-clientes` | `GET /recargas/historial/clientes` → `RecargaCliente[]` |
+| Operator injection history | `/recargas/historial-inyecciones` | `GET /recargas/historial/inyecciones` → `InyeccionOperadora[]` |
+
+---
+
+## REST Endpoints
+
+```typescript
+// src/modules/Recargas/api/RecargasService.ts
+export const RecargasService = {
+  getSaldos(): Promise<OperadoraSaldo[]>
+    // GET /recargas/operadoras/saldos
+
+  getHistorialClientes(): Promise<RecargaCliente[]>
+    // GET /recargas/historial/clientes
+
+  getHistorialInyecciones(): Promise<InyeccionOperadora[]>
+    // GET /recargas/historial/inyecciones
+
+  createRecargaCliente(data: CreateRecargaClienteDto): Promise<RecargaCliente>
+    // POST /recargas/cliente
+
+  createInyeccion(data: CreateInyeccionDto): Promise<InyeccionOperadora>
+    // POST /recargas/inyeccion
+}
+```
+
+<Tip>
+  After each successful operation, `RecargasOperacion` calls `loadSaldos()` to refresh the `SaldosCards`. This gives the cashier immediate visual feedback that the operator's pool balance has changed.
+</Tip>
+
+---
+
+## URL Routes
+
+| Page | Path |
+|---|---|
+| Operations panel | `/recargas/operacion` |
+| Client top-up history | `/recargas/historial-clientes` |
+| Operator injection history | `/recargas/historial-inyecciones` |

@@ -1,0 +1,224 @@
+---
+title: "CajaContext: Global Cash Session State in Kantuta POS"
+sidebarTitle: "Caja Context"
+description: "How CajaContext tracks the active cash-drawer session, persists it to localStorage, and exposes checkSesion, abrirCaja, and cerrarCaja to every module."
+---
+
+`CajaContext` manages the active cash-drawer (caja) session for the currently signed-in user. It is the central gating mechanism for POS, Recargas, and Agentes operations — any feature that involves recording a transaction reads `sesionActiva` from this context before proceeding. The session is persisted to `localStorage` under the key `sesion_caja` so that a hard browser refresh does not clear the working state while a session is genuinely open.
+
+## CajaContextType Interface
+
+```typescript
+interface CajaContextType {
+  sesionActiva: SesionCaja | null;
+  loading: boolean;
+  checkSesion: () => Promise<void>;
+  abrirCaja: (idCaja: number, montoInicial: number) => Promise<any>;
+  cerrarCaja: (montoFinalReal: number, idSesion?: number) => Promise<any>;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `sesionActiva` | `SesionCaja \| null` | The active session object returned by the API, or `null` if no session is open |
+| `loading` | `boolean` | `true` while `checkSesion` is in flight on mount; modules should gate rendering until this is `false` |
+| `checkSesion` | `() => Promise<void>` | Re-queries the backend for the user's active session; called automatically on mount and when `user` changes |
+| `abrirCaja` | `(idCaja, montoInicial) => Promise<any>` | Opens a new cash session via `POST /cajas/abrir` |
+| `cerrarCaja` | `(montoFinalReal, idSesion?) => Promise<any>` | Closes the session via `PATCH /cajas/sesion/:id/cerrar` |
+
+## Consuming the Context
+
+```typescript
+import { useCaja } from '../context/CajaContext';
+
+function PuntoDeVenta() {
+  const { sesionActiva, abrirCaja, cerrarCaja } = useCaja();
+
+  if (!sesionActiva) {
+    return <p>Debe abrir una caja antes de realizar ventas.</p>;
+  }
+
+  return <POSScreen sesion={sesionActiva} onCerrar={cerrarCaja} />;
+}
+```
+
+<Warning>
+  `useCaja()` throws if called outside `CajaProvider`:
+  ```
+  useCaja debe usarse dentro de CajaProvider
+  ```
+  `CajaProvider` must sit inside `AuthContextProvider` because it calls `useAuth()` to obtain the user ID on mount. See the [Project Structure](/architecture/project-structure) page for the correct provider nesting order.
+</Warning>
+
+## Session Lifecycle
+
+<Steps>
+  <Step title="checkSesion — querying the active session on mount">
+    `CajaProvider` calls `checkSesion()` inside a `useEffect` that runs whenever `user` changes (including the initial mount). It calls `GET /cajas/sesion-activa/:userId`:
+
+    ```typescript
+    const checkSesion = async () => {
+      if (!user) {
+        setSesionActiva(null);
+        localStorage.removeItem('sesion_caja');
+        setLoading(false);
+        return;
+      }
+      try {
+        const response = await CajasService.getSesionActivaUsuario(user.id);
+        const data = response.data || null;
+        setSesionActiva(data);
+        if (data) {
+          localStorage.setItem('sesion_caja', JSON.stringify(data));
+        } else {
+          localStorage.removeItem('sesion_caja');
+        }
+      } catch (err: any) {
+        if (err.response?.status === 404) {
+          setSesionActiva(null);
+          localStorage.removeItem('sesion_caja');
+        }
+        // Non-404 errors leave localStorage intact for offline resilience
+      } finally {
+        setLoading(false);
+      }
+    };
+    ```
+
+    A **404** response from the API is the normal signal that the user has no open session — it is not treated as an error; `sesionActiva` is set to `null` and `sesion_caja` is removed from storage. Any other network failure leaves the existing `localStorage` value untouched as an offline fallback.
+  </Step>
+
+  <Step title="abrirCaja — opening a cash session">
+    Sends `POST /cajas/abrir` with the physical caja ID, the opening cash amount, and the user's ID. On success, the response data is written to both React state and `localStorage`:
+
+    ```typescript
+    const abrirCaja = async (idCaja: number, montoInicial: number) => {
+      if (!user) return;
+      const response = await CajasService.abrirSesion({
+        id_caja: idCaja,
+        monto_inicial: Number(montoInicial),
+        id_usuario: user.id,
+        id_user_create: user.id,
+      });
+      const data = response.data;
+      setSesionActiva(data);
+      localStorage.setItem('sesion_caja', JSON.stringify(data));
+      return data;
+    };
+    ```
+
+    After `abrirCaja` resolves, `sesionActiva` becomes non-null and all dependent modules unlock their operations.
+  </Step>
+
+  <Step title="cerrarCaja — closing the cash session">
+    Sends `PATCH /cajas/sesion/:id/cerrar` with the physical closing amount. The session ID defaults to `sesionActiva.id` but can be overridden via the optional `idSesion` parameter — useful when an administrator closes a different user's session:
+
+    ```typescript
+    const cerrarCaja = async (montoFinalReal: number, idSesion?: number) => {
+      const targetId = idSesion || sesionActiva?.id;
+      if (!targetId || !user) return;
+      const response = await CajasService.cerrarSesion(targetId, {
+        monto_final_real: montoFinalReal,
+        id_user_update: user.id,
+      });
+      setSesionActiva(null);
+      localStorage.removeItem('sesion_caja');
+      return response.data;
+    };
+    ```
+
+    After a successful close, `sesionActiva` is set to `null` and `sesion_caja` is removed from `localStorage`.
+  </Step>
+</Steps>
+
+## localStorage Persistence
+
+The initial state for `sesionActiva` is hydrated from `localStorage` synchronously, before any API call completes:
+
+```typescript
+const [sesionActiva, setSesionActiva] = useState<SesionCaja | null>(() => {
+  const saved = localStorage.getItem('sesion_caja');
+  return saved ? JSON.parse(saved) : null;
+});
+```
+
+This means that on a hard refresh, the POS screen renders immediately with the last-known session rather than showing a loading spinner. The subsequent `checkSesion()` call reconciles the local value with the server state and updates `localStorage` accordingly.
+
+<Note>
+  Each user has **at most one** active session at a time. `checkSesion` queries by `user.id`, so two different users logged into the same browser will each see only their own `sesionActiva`. Switching users (via `logoutStorage` and re-login) triggers a new `checkSesion` call because `CajaProvider` re-runs its effect whenever the `user` object from `useAuth()` changes.
+</Note>
+
+## API Endpoints Used by CajasService
+
+All calls go through `CajasService` in `src/modules/Cajas/services/cajasService.ts`, which attaches the Bearer token from `localStorage` via `getHeaders()`:
+
+<CodeGroup>
+
+```typescript GET Active Session
+// GET /cajas/sesion-activa/:userId
+await CajasService.getSesionActivaUsuario(user.id);
+// 200 → returns SesionCaja object
+// 404 → no active session for this user
+```
+
+```typescript POST Open Session
+// POST /cajas/abrir
+await CajasService.abrirSesion({
+  id_caja: idCaja,
+  monto_inicial: Number(montoInicial),
+  id_usuario: user.id,
+  id_user_create: user.id,
+});
+```
+
+```typescript PATCH Close Session
+// PATCH /cajas/sesion/:id/cerrar
+await CajasService.cerrarSesion(id_sesion, {
+  monto_final_real: montoFinalReal,
+  id_user_update: user.id,
+});
+```
+
+```typescript GET Session Balance
+// GET /cajas/sesion/:id/balance
+await CajasService.getSesionBalance(id_sesion);
+// Used by CajasControl to display running totals
+```
+
+</CodeGroup>
+
+## SocketContext and Real-Time Events
+
+Alongside `CajaContext`, the `SocketContext` provides a single `socket.io-client` instance to the entire app. The socket connects to the API base URL (with the `/api` suffix stripped) as soon as the module loads:
+
+```typescript
+// src/context/SocketContext.tsx
+import { io } from 'socket.io-client';
+import { API_BASE_URL } from '../components/auth/services/urlBase';
+
+const socketUrl = API_BASE_URL.replace(/\/api\/?$/, '');
+const socket = io(socketUrl);
+
+export const SocketContext = createContext<Socket>(socket);
+```
+
+POS and Recargas modules consume this socket via the `useSocket()` hook and listen for `dataChanged` events to invalidate and re-fetch their data without a manual page refresh. This keeps multiple operator tabs consistent when another user updates the inventory or completes a transaction.
+
+```typescript
+import { useSocket } from '../../context/SocketContext';
+
+function ProductosMain() {
+  const socket = useSocket();
+
+  useEffect(() => {
+    socket.on('dataChanged', () => {
+      fetchProductos(); // re-fetch on any server-side change
+    });
+    return () => { socket.off('dataChanged'); };
+  }, [socket]);
+}
+```
+
+<Tip>
+  If you are adding a new module that should react to real-time changes, import `useSocket()` and register a `dataChanged` listener in a `useEffect`. Always clean up the listener in the effect's return function to avoid duplicate handlers when the component re-mounts.
+</Tip>

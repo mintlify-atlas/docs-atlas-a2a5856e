@@ -1,0 +1,211 @@
+---
+title: "Manage Products, Categories, and Purchases in Kantuta POS"
+sidebarTitle: "Inventory"
+description: "Manage your product catalog, organize categories, and register supplier purchases with automatic stock updates in Kantuta POS."
+---
+
+The Inventory module is the backbone of Kantuta POS. It is split into three sub-sections — **Products**, **Categories**, and **Purchases** — each accessible from the `/inventario` route tree. Together they let you maintain a live product catalog, keep stock levels accurate, and record every incoming purchase from suppliers.
+
+<CardGroup cols={3}>
+  <Card title="Products" icon="box" href="/modules/inventory#products">
+    View, search, and manage every SKU in your catalog. Monitor stock levels with color-coded badges.
+  </Card>
+  <Card title="Categories" icon="tag" href="/modules/inventory#categories">
+    Group products into named categories. Soft-delete preserves history while hiding inactive entries.
+  </Card>
+  <Card title="Purchases" icon="truck" href="/modules/inventory#purchases">
+    Register supplier deliveries. Each line item increments `stock_actual`. Optionally charge the purchase directly to an open cash register.
+  </Card>
+</CardGroup>
+
+---
+
+## Products
+
+Navigate to `/inventario/productos` to reach the **ProductosMain** page. The data table lists every product returned from `GET /inventario/producto` and refreshes automatically over Socket.IO whenever the `dataChanged` event fires for the `producto` or `venta` entity.
+
+### Producto Interface
+
+```typescript
+// src/modules/Inventario/Productos/interfaces/Producto.ts
+import { Categoria } from "../../Categorias/interfaces/Categoria";
+
+export interface Producto {
+  id?: number;
+  nombre: string;
+  codigo_barras?: string | null;
+  precio_venta: number;
+  costo_compra: number;
+  stock_actual: number;
+  stock_minimo: number;
+  id_categoria: number;
+  categoria?: Categoria;
+  id_user_create?: number;
+  id_user_update?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+```
+
+| Field | Description |
+|---|---|
+| `nombre` | Display name shown throughout the POS. |
+| `codigo_barras` | Optional barcode — used by the POS search field to find products by scan. |
+| `precio_venta` | Unit sale price in Bolivianos (Bs.). |
+| `costo_compra` | Unit purchase cost — used for margin reporting. |
+| `stock_actual` | Current on-hand quantity. Decremented on each completed sale, incremented on each purchase. |
+| `stock_minimo` | Alert threshold. When `stock_actual` drops to or below this value, a low-stock badge is shown. |
+| `id_categoria` | Foreign key to the parent `Categoria`. |
+
+### Stock Badge Indicator
+
+The stock column renders a color-coded badge computed from the ratio `stock_actual / stock_minimo`:
+
+| Ratio | Badge color | Meaning |
+|---|---|---|
+| ≥ 0.50 | 🟢 Green | Stock is healthy. |
+| 0.25 – 0.49 | 🟡 Yellow | Stock is running low. |
+| < 0.25 | 🔴 Red (bold) | Critical — restock immediately. |
+
+### Searching Products
+
+The POS terminal (`/ventas/pos`) provides a real-time text filter that matches against both `nombre` and `codigo_barras`. The same filter logic is reproduced inline in `ProductosMain` for quick lookups in the catalog view.
+
+### Products REST Endpoints
+
+```typescript
+// src/modules/Inventario/Productos/services/productosService.ts
+export const ProductosService = {
+  getProducts()                          // GET  /inventario/producto
+  getProductById(id: number)             // GET  /inventario/producto/:id
+  createProduct(data: Producto)          // POST /inventario/producto
+  updateProduct(id: number, data: ...)   // PATCH /inventario/producto/:id
+  deleteProduct(id: number)              // DELETE /inventario/producto/:id
+}
+```
+
+<Note>
+  `createProduct` and `updateProduct` automatically inject the logged-in user's ID as `id_user_create` / `id_user_update` from `localStorage`.
+</Note>
+
+---
+
+## Categories
+
+Navigate to `/inventario/categorias` to manage product groupings.
+
+### Categoria Interface
+
+```typescript
+// src/modules/Inventario/Categorias/interfaces/Categoria.ts
+export interface Categoria {
+  id?: number;
+  nombre: string;
+  id_user_created?: number;
+  id_user_updated?: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+```
+
+Categories have a simple structure: an `id`, a human-readable `nombre`, and standard audit timestamps. There are no hard-deletes — calling `DELETE /inventario/categorias/:id` performs a **soft-delete** that sets an internal `estado` flag to `false`, preserving the category name on any historical product records.
+
+### Categories REST Endpoints
+
+```typescript
+// src/modules/Inventario/Categorias/services/categoriasService.ts
+export const CategoriasService = {
+  getCategories()                        // GET  /inventario/categorias
+  getCategoryById(id: number)            // GET  /inventario/categorias/:id
+  createCategory(data: Categoria)        // POST /inventario/categorias
+  updateCategory(id: number, data: ...) // PATCH /inventario/categorias/:id
+  deleteCategory(id: number)             // DELETE /inventario/categorias/:id  (soft-delete)
+}
+```
+
+---
+
+## Purchases
+
+Navigate to `/inventario/compras` to view purchase history, or `/inventario/compras/registrar` to open the **ComprasRegister** form.
+
+### CrearCompraRequest Interface
+
+```typescript
+// src/modules/Inventario/Compras/interfaces/CrearCompraRequest.ts
+export interface DetalleCompraInput {
+  id_producto: number;
+  cantidad: number;
+  costo_unitario: number;
+}
+
+export interface CrearCompraRequest {
+  proveedor?: string;            // Optional supplier name
+  pagar_con_caja: boolean;       // If true, creates an EGRESO movement on the active session
+  id_sesion_caja?: number;       // Required when pagar_con_caja is true
+  detalles: DetalleCompraInput[];
+  id_user_create: number;
+}
+```
+
+### How Stock is Updated
+
+When a purchase is confirmed (`POST /inventario/compras`), the backend iterates every `DetalleCompraInput` and adds `cantidad` to the corresponding product's `stock_actual`. No manual stock adjustment is needed.
+
+### Paying with the Cash Register
+
+Toggling **"Pagar en efectivo (desde Caja POS)"** sets `pagar_con_caja: true` and attaches the `id_sesion_caja` from `CajaContext.sesionActiva`. The backend automatically records an **EGRESO** movement on that cash-register session equal to the total purchase value, keeping the cash-register balance accurate.
+
+<Warning>
+  The **"Pagar con Caja"** option requires an open cash-register session. If no session is active, the checkbox is shown but submission is blocked with a validation error.
+</Warning>
+
+### Registering a Purchase
+
+<Steps>
+  <Step title="Open the form">
+    Navigate to `/inventario/compras/registrar`. The page pre-loads all available products.
+  </Step>
+  <Step title="Fill general data">
+    Optionally enter a **Proveedor** (supplier name). Enable **Pagar con Caja** if the purchase is paid in cash from the current shift.
+  </Step>
+  <Step title="Add line items">
+    Select a product, set **Cantidad** and **Costo Unitario**, then click **Agregar**. Adding the same product a second time increments its quantity and updates the unit cost.
+  </Step>
+  <Step title="Confirm the purchase">
+    Review the detail table and total, then click **Confirmar Compra**. On HTTP 201 the app redirects back to `/inventario/compras` and all product stock values are updated immediately.
+  </Step>
+</Steps>
+
+---
+
+## Role Restrictions
+
+<Accordion title="Administrador-only actions">
+  The following actions require the **Administrador** role. Regular users can view the catalog and purchase history but cannot modify it.
+
+  | Action | Route |
+  |---|---|
+  | Create product | `/inventario/productos/registrar` |
+  | Edit product | `/inventario/productos/editar/:id` |
+  | Delete product | Button on `/inventario/productos` |
+  | Create category | `/inventario/categorias/registrar` |
+  | Edit category | `/inventario/categorias/editar/:id` |
+  | Delete category | Button on `/inventario/categorias` |
+
+  Route protection is enforced at the React Router level via a `ProtectedRoute allowedRoles={['Administrador']}` wrapper. The edit and delete buttons are also hidden in the UI for non-admin users via the `useRole()` hook's `isAdmin` flag.
+</Accordion>
+
+---
+
+## URL Routes
+
+| Page | Path |
+|---|---|
+| Product catalog | `/inventario/productos` |
+| Register product *(Admin)* | `/inventario/productos/registrar` |
+| Edit product *(Admin)* | `/inventario/productos/editar/:id` |
+| Category list | `/inventario/categorias` |
+| Register category *(Admin)* | `/inventario/categorias/registrar` |
+| Purchase history | `/inventario/compras` |
+| Register purchase | `/inventario/compras/registrar` |

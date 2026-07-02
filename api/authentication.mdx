@@ -1,0 +1,406 @@
+---
+title: "Authenticate with Kantuta POS: JWT Login and Token Refresh"
+sidebarTitle: "Authentication"
+description: "Learn how to sign in, refresh JWT access tokens, and complete the 3-step email-based password reset flow in the Kantuta POS API."
+---
+
+Authentication in Kantuta POS is built on short-lived JWT **access tokens** and longer-lived **refresh tokens**. All auth endpoints live under the `/auth` prefix and are **public** — no existing token is required to call them. Once a user signs in, the access token must be sent as a Bearer header on every subsequent protected request.
+
+<Warning>
+  Both `access_token` and `refresh_token` are stored in `localStorage`. This is
+  convenient for a POS environment on a controlled device, but be aware that any
+  JavaScript running on the same origin can read them. Never deploy on shared or
+  untrusted machines without additional hardening.
+</Warning>
+
+## TypeScript Interfaces
+
+```typescript
+// Auth request / response types
+
+interface LoginRequest {
+  email: string;    // Must be a valid email address
+  password: string; // User's password
+}
+
+interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  user: Usuario; // See the Overview page for the full Usuario interface
+}
+
+interface RefreshTokenResponse {
+  access_token: string;
+}
+
+interface RequestCodeRequest {
+  email: string;
+}
+
+interface ConfirmCodeRequest {
+  email: string;
+  code: string; // 6-character alphanumeric code, e.g. "A1B2C3"
+}
+
+interface ResetConfirmRequest {
+  email: string;
+  newPassword: string;
+}
+
+interface GeneralMessageResponse {
+  message: string;
+}
+```
+
+---
+
+## POST /auth/login [PUBLIC]
+
+Signs a user in and returns a pair of JWT tokens alongside the full user object.
+
+### Request body
+
+<ParamField body="email" type="string" required>
+  The user's registered email address. Must be a valid email format.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The user's password in plain text. The API handles hashing on the backend.
+</ParamField>
+
+### Response
+
+<ResponseField name="access_token" type="string">
+  Short-lived JWT used to authenticate subsequent requests. Include it in the
+  `Authorization: Bearer` header.
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  Longer-lived token used exclusively to obtain a new `access_token` when the
+  current one expires.
+</ResponseField>
+
+<ResponseField name="user" type="Usuario">
+  The full user object including their linked `persona` record and assigned
+  `role`. See the [Overview](/api/overview#global-typescript-interfaces) page for
+  the complete `Usuario` interface.
+</ResponseField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "cajero@kantuta.com",
+    "password": "mi_contraseña_segura"
+  }'
+```
+
+```typescript TypeScript (Axios)
+import axios from "axios";
+import { API_BASE_URL } from "./services/urlBase";
+
+interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export const authService = {
+  login: async (data: LoginRequest) => {
+    const response = await axios.post(`${API_BASE_URL}/auth/login`, data);
+    return response;
+  },
+};
+```
+
+```json Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": 1,
+    "name": "Ana Cajero",
+    "email": "cajero@kantuta.com",
+    "estado": true,
+    "created_at": "2024-01-10T08:00:00.000Z",
+    "updated_at": "2024-07-15T10:30:00.000Z",
+    "id_user_create": null,
+    "role": {
+      "id": 2,
+      "nombre": "user"
+    },
+    "persona": {
+      "id": 5,
+      "nombres": "Ana",
+      "p_apellido": "Mamani",
+      "s_apellido": "Quispe",
+      "fecha_nacimiento": "1995-03-20",
+      "genero": "F",
+      "estado": true,
+      "created_at": "2024-01-10T08:00:00.000Z",
+      "updated_at": "2024-01-10T08:00:00.000Z",
+      "id_user_create": 1
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+The `SignInForm` component destructures the response and persists the tokens via the `loginStorage` context helper:
+
+```typescript
+// src/components/auth/SignInForm.tsx (excerpt)
+const response = await authService.login({ email, password });
+
+if (response.status === 201 || response.status === 200) {
+  const { access_token, refresh_token, user } = response.data;
+  loginStorage(access_token, refresh_token, user);
+}
+```
+
+---
+
+## POST /auth/refresh_token [PUBLIC]
+
+Exchanges a valid `refresh_token` for a new `access_token`. The refresh token must be sent as the Bearer value in the `Authorization` header — **not** in the request body.
+
+### Request headers
+
+<ParamField header="Authorization" type="string" required>
+  `Bearer <refresh_token>` — the refresh token received at login.
+</ParamField>
+
+### Response
+
+<ResponseField name="access_token" type="string">
+  A newly issued short-lived JWT. Store it in `localStorage` and use it for all
+  subsequent protected requests.
+</ResponseField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3000/auth/refresh_token \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9_NEW..."
+}
+```
+
+</CodeGroup>
+
+---
+
+## Axios Interceptor Pattern
+
+Rather than manually managing token injection and 401 handling in every service call, configure a shared Axios instance with two interceptors. This is the pattern used throughout the Kantuta POS frontend.
+
+```typescript
+import axios from "axios";
+import { API_BASE_URL } from "./services/urlBase";
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+// Interceptor 1 — inject the current access token on every outgoing request
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("access_token");
+    if (token && config.headers) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error),
+);
+
+// Interceptor 2 — on 401, swap tokens and replay the original request
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true; // Prevent infinite retry loops
+
+      try {
+        const refreshToken = localStorage.getItem("refresh_token");
+
+        // Use a raw axios call to bypass the request interceptor above
+        const res = await axios.post(
+          `${API_BASE_URL}/auth/refresh_token`,
+          {},
+          {
+            headers: { Authorization: `Bearer ${refreshToken}` },
+          },
+        );
+
+        const newAccessToken = res.data.access_token;
+        localStorage.setItem("access_token", newAccessToken);
+
+        // Replay the original failed request with the refreshed token
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        return api(originalRequest);
+      } catch (refreshError) {
+        // Both tokens are expired — redirect to the sign-in page
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+        window.location.href = "/signin";
+        return Promise.reject(refreshError);
+      }
+    }
+
+    return Promise.reject(error);
+  },
+);
+
+export default api;
+```
+
+<Note>
+  The `_retry` flag on `originalRequest` is critical. Without it, a failed
+  refresh attempt would trigger the interceptor again, creating an infinite
+  loop before the redirect to `/signin`.
+</Note>
+
+---
+
+## Password Reset Flow
+
+Resetting a password requires three sequential API calls. The `ResetPasswordForm` component manages the current step in local state (`step: 1 | 2 | 3`) and advances through each stage on success.
+
+<Steps>
+  <Step title="Request a verification code — POST /auth/reset/code">
+    Send the user's email address. The API dispatches a **6-character alphanumeric code** to that address. The code is valid for **15 minutes**.
+
+    ### Request body
+
+    <ParamField body="email" type="string" required>
+      The email address of the account to recover.
+    </ParamField>
+
+    ### Response
+
+    <ResponseField name="message" type="string">
+      `"Código de verificación enviado al correo"` on success.
+    </ResponseField>
+
+    ```bash cURL
+    curl -X POST http://localhost:3000/auth/reset/code \
+      -H "Content-Type: application/json" \
+      -d '{ "email": "cajero@kantuta.com" }'
+    ```
+
+    ```json Response
+    {
+      "message": "Código de verificación enviado al correo"
+    }
+    ```
+
+    From `ResetPasswordForm.tsx`:
+
+    ```typescript
+    await axios.post(`${API_BASE_URL}/auth/reset/code`, { email });
+    setStep(2);
+    setSuccessMsg("Código enviado. Por favor revisa tu correo.");
+    ```
+  </Step>
+
+  <Step title="Verify the code — POST /auth/confirm-code">
+    Submit the email address alongside the code the user received. A successful response confirms the code is valid and unexpired before the frontend advances to step 3.
+
+    ### Request body
+
+    <ParamField body="email" type="string" required>
+      The same email address used in step 1.
+    </ParamField>
+
+    <ParamField body="code" type="string" required>
+      The 6-character code from the recovery email (e.g. `"A1B2C3"`).
+    </ParamField>
+
+    ### Response
+
+    <ResponseField name="message" type="string">
+      `"Código de verificación correcto"` on success.
+    </ResponseField>
+
+    ```bash cURL
+    curl -X POST http://localhost:3000/auth/confirm-code \
+      -H "Content-Type: application/json" \
+      -d '{ "email": "cajero@kantuta.com", "code": "A1B2C3" }'
+    ```
+
+    ```json Response
+    {
+      "message": "Código de verificación correcto"
+    }
+    ```
+
+    From `ResetPasswordForm.tsx`:
+
+    ```typescript
+    await axios.post(`${API_BASE_URL}/auth/confirm-code`, { email, code });
+    setStep(3);
+    setSuccessMsg("Código verificado correctamente. Ingresa tu nueva contraseña.");
+    ```
+  </Step>
+
+  <Step title="Set the new password — POST /auth/reset-confirm">
+    Once the code is verified, send the email and the chosen new password. On success the API updates the account's password and the frontend redirects the user to the sign-in page after a brief delay.
+
+    ### Request body
+
+    <ParamField body="email" type="string" required>
+      The email address of the account being recovered.
+    </ParamField>
+
+    <ParamField body="newPassword" type="string" required>
+      The new plain-text password. The API handles hashing server-side.
+    </ParamField>
+
+    ### Response
+
+    <ResponseField name="message" type="string">
+      `"Contraseña actualizada correctamente"` on success.
+    </ResponseField>
+
+    ```bash cURL
+    curl -X POST http://localhost:3000/auth/reset-confirm \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "cajero@kantuta.com",
+        "newPassword": "nueva_contraseña_segura"
+      }'
+    ```
+
+    ```json Response
+    {
+      "message": "Contraseña actualizada correctamente"
+    }
+    ```
+
+    From `ResetPasswordForm.tsx`:
+
+    ```typescript
+    await axios.post(`${API_BASE_URL}/auth/reset-confirm`, { email, newPassword });
+    setSuccessMsg("Contraseña actualizada exitosamente.");
+    setTimeout(() => navigate("/signin"), 2000);
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  The verification code expires after **15 minutes**. If the user does not
+  complete all three steps within that window, they must restart from step 1
+  and request a new code.
+</Warning>

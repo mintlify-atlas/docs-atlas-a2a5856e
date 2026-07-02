@@ -1,0 +1,529 @@
+---
+title: "Users and Persons API: Registration, Listing, and Updates"
+sidebarTitle: "Users"
+description: "Register new users alongside their persona records, list and update existing accounts, manage persona details, and send transactional emails via the Kantuta POS API."
+---
+
+The Users module manages the two-layer identity model used in Kantuta POS: a **Usuario** (system account with credentials and a role) and a **Persona** (personal identity record with name and demographic data). Every `Usuario` is backed by exactly one `Persona`. Registration creates both records in a single call. Update operations are split — account-level fields (email, password, role) go to `/usuario/:id`, while personal details go to `/persona`. The mail endpoint provides a simple transactional email utility for notifications.
+
+---
+
+## TypeScript Interfaces
+
+```typescript
+export interface BaseEntityAudit {
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string; // ISO Date String
+  updated_at: string; // ISO Date String
+}
+
+export interface Role {
+  id: number;
+  nombre: "admin" | "user" | string;
+  descripcion?: string;
+}
+
+export interface Persona extends BaseEntityAudit {
+  id: number;
+  nombres: string;
+  p_apellido: string;
+  s_apellido?: string;
+  fecha_nacimiento: string; // Format: "YYYY-MM-DD"
+  genero: string;           // "M" or "F"
+}
+
+export interface Usuario extends BaseEntityAudit {
+  id: number;
+  name: string;   // Display name
+  email: string;
+  persona: Persona;
+  role: Role;
+}
+```
+
+---
+
+## User Endpoints
+
+### Register a New User
+
+**`POST /usuario/register`** — Creates a new `Usuario` and its associated `Persona` in a single request.
+
+<Note>
+  This endpoint is **public** — no `Authorization` header is required. It is the only user endpoint that can be called without an existing authenticated session, allowing admin-driven onboarding flows.
+</Note>
+
+<ParamField body="email" type="string" required>
+  Unique email address for the new account. Must be a valid email format.
+</ParamField>
+
+<ParamField body="password" type="string">
+  Account password. Should be provided for all standard registrations.
+</ParamField>
+
+<ParamField body="nombres" type="string" required>
+  First name(s) of the person (e.g., `"María Elena"`).
+</ParamField>
+
+<ParamField body="p_apellido" type="string" required>
+  First (paternal) surname (e.g., `"García"`).
+</ParamField>
+
+<ParamField body="s_apellido" type="string">
+  Second (maternal) surname (e.g., `"López"`). Optional.
+</ParamField>
+
+<ParamField body="fecha_nacimiento" type="string" required>
+  Date of birth in `YYYY-MM-DD` format (e.g., `"1992-04-15"`).
+</ParamField>
+
+<ParamField body="genero" type="string" required>
+  Gender identifier (e.g., `"M"` for male, `"F"` for female).
+</ParamField>
+
+<ParamField body="name" type="string">
+  Optional display name shown in the POS UI. If omitted, the backend may derive it from `nombres`.
+</ParamField>
+
+<ParamField body="estado" type="boolean">
+  Initial account status. Defaults to `true` (active) if omitted.
+</ParamField>
+
+<ParamField body="id_role" type="number">
+  Role ID to assign to the new user. If omitted, the backend assigns the default role.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/usuario/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "cajero1@kantuta.com",
+    "password": "Segura#2024",
+    "nombres": "Carlos Alberto",
+    "p_apellido": "Mamani",
+    "s_apellido": "Quispe",
+    "fecha_nacimiento": "1995-08-22",
+    "genero": "M",
+    "name": "carlitos",
+    "estado": true
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Usuario } from "./types";
+
+interface RegisterUsuarioRequest {
+  email: string;
+  password?: string;
+  nombres: string;
+  p_apellido: string;
+  s_apellido?: string;
+  fecha_nacimiento: string;
+  genero: string;
+  name?: string;
+  estado?: boolean;
+  id_role?: number;
+}
+
+export const registerUsuario = async (
+  data: RegisterUsuarioRequest
+): Promise<Usuario> => {
+  const response = await api.post<Usuario>("/usuario/register", data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Usuario` — the full user object including the created `Persona` and assigned `Role`.
+
+---
+
+### List All Users
+
+**`GET /usuario`** — Returns all registered user accounts with their associated persona and role data.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/usuario \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Usuario } from "./types";
+
+interface ListUsuariosResponse {
+  status: number;
+  message: string;
+  data: Usuario[];
+}
+
+export const getUsuarios = async (): Promise<Usuario[]> => {
+  const response = await api.get<ListUsuariosResponse>("/usuario");
+  return response.data.data;
+};
+```
+</CodeGroup>
+
+**Response:**
+
+```json
+{
+  "status": 200,
+  "message": "Usuarios encontrados",
+  "data": [
+    {
+      "id": 1,
+      "name": "carlitos",
+      "email": "cajero1@kantuta.com",
+      "estado": true,
+      "id_user_create": null,
+      "created_at": "2024-08-22T14:00:00.000Z",
+      "updated_at": "2024-08-22T14:00:00.000Z",
+      "persona": {
+        "id": 1,
+        "nombres": "Carlos Alberto",
+        "p_apellido": "Mamani",
+        "s_apellido": "Quispe",
+        "fecha_nacimiento": "1995-08-22",
+        "genero": "M",
+        "estado": true,
+        "id_user_create": null,
+        "created_at": "2024-08-22T14:00:00.000Z",
+        "updated_at": "2024-08-22T14:00:00.000Z"
+      },
+      "role": {
+        "id": 2,
+        "nombre": "user",
+        "descripcion": "Cajero estándar"
+      }
+    }
+  ]
+}
+```
+
+---
+
+### Update a User
+
+**`PATCH /usuario/:id`** — Partially updates an existing user's account-level fields. Only the fields provided in the request body are changed.
+
+<ParamField body="name" type="string">
+  Updated display name.
+</ParamField>
+
+<ParamField body="email" type="string">
+  Updated email address.
+</ParamField>
+
+<ParamField body="password" type="string">
+  New password. Will be hashed before storage.
+</ParamField>
+
+<ParamField body="estado" type="boolean">
+  Set to `false` to deactivate the account without deleting it.
+</ParamField>
+
+<ParamField body="id_role" type="number">
+  Reassign the user to a different role by ID.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.kantuta.com/usuario/1 \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "estado": false }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Usuario } from "./types";
+
+interface UpdateUsuarioRequest {
+  name?: string;
+  email?: string;
+  password?: string;
+  estado?: boolean;
+  id_role?: number;
+}
+
+export const updateUsuario = async (
+  id: number,
+  data: UpdateUsuarioRequest
+): Promise<Usuario> => {
+  const response = await api.patch<Usuario>(`/usuario/${id}`, data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Usuario` (updated object)
+
+---
+
+## Persona Endpoints
+
+### Create a Persona
+
+**`POST /persona`** — Creates a standalone `Persona` record without an associated `Usuario`. Useful for tracking individuals who are not system users.
+
+<ParamField body="nombres" type="string" required>
+  First name(s).
+</ParamField>
+
+<ParamField body="p_apellido" type="string" required>
+  Paternal surname.
+</ParamField>
+
+<ParamField body="s_apellido" type="string" required>
+  Maternal surname.
+</ParamField>
+
+<ParamField body="fecha_nacimiento" type="string" required>
+  Date of birth in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField body="genero" type="string" required>
+  Gender code (e.g., `"M"` or `"F"`).
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/persona \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombres": "Ana Lucía",
+    "p_apellido": "Flores",
+    "s_apellido": "Condori",
+    "fecha_nacimiento": "1988-03-10",
+    "genero": "F"
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Persona } from "./types";
+
+interface CreatePersonaRequest {
+  nombres: string;
+  p_apellido: string;
+  s_apellido: string;
+  fecha_nacimiento: string;
+  genero: string;
+}
+
+interface CreatePersonaResponse {
+  status: number;
+  message: string;
+  data: Persona;
+}
+
+export const createPersona = async (
+  data: CreatePersonaRequest
+): Promise<Persona> => {
+  const response = await api.post<CreatePersonaResponse>("/persona", data);
+  return response.data.data;
+};
+```
+</CodeGroup>
+
+**Response:**
+
+```json
+{
+  "status": 200,
+  "message": "Se creó la persona con éxito!",
+  "data": { ... }
+}
+```
+
+---
+
+### List All Personas
+
+**`GET /persona`** — Returns all persona records (requires authentication).
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/persona \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Persona } from "./types";
+
+interface ListPersonasResponse {
+  status: number;
+  message: string;
+  data: Persona[];
+}
+
+export const getPersonas = async (): Promise<Persona[]> => {
+  const response = await api.get<ListPersonasResponse>("/persona");
+  return response.data.data;
+};
+```
+</CodeGroup>
+
+**Response:** Wrapped response with `status`, `message`, and `data: Persona[]`.
+
+---
+
+### Get Persona by ID
+
+**`GET /persona/:id`** — Returns a single persona record by its ID.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/persona/3 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Persona } from "./types";
+
+export const getPersonaById = async (id: number): Promise<Persona> => {
+  const response = await api.get<Persona>(`/persona/${id}`);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Persona`
+
+---
+
+### Update a Persona
+
+**`PUT /persona`** — Updates an existing persona's personal details. The target persona ID is passed **in the request body** (not as a URL path parameter). Uses `PUT` semantics.
+
+<ParamField body="id" type="number" required>
+  ID of the persona to update.
+</ParamField>
+
+<ParamField body="id_user_update" type="number" required>
+  ID of the user performing the update. Auto-injected by the frontend service from the logged-in session.
+</ParamField>
+
+<ParamField body="nombres" type="string">
+  Updated first name(s).
+</ParamField>
+
+<ParamField body="p_apellido" type="string">
+  Updated paternal surname.
+</ParamField>
+
+<ParamField body="s_apellido" type="string">
+  Updated maternal surname.
+</ParamField>
+
+<ParamField body="fecha_nacimiento" type="string">
+  Updated date of birth in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField body="genero" type="string">
+  Updated gender code.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.kantuta.com/persona \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": 3,
+    "id_user_update": 1,
+    "p_apellido": "Flores Arce"
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Persona } from "./types";
+
+interface UpdatePersonaRequest {
+  id: number;
+  id_user_update: number;
+  nombres?: string;
+  p_apellido?: string;
+  s_apellido?: string;
+  fecha_nacimiento?: string;
+  genero?: string;
+}
+
+export const updatePersona = async (
+  data: UpdatePersonaRequest
+): Promise<Persona> => {
+  const response = await api.put<Persona>("/persona", data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Persona` (updated object)
+
+---
+
+## Mail Endpoint
+
+### Send a Transactional Email
+
+**`POST /mail`** — Sends a plain-text email through the configured SMTP transport. Useful for confirmations, notifications, and password recovery flows.
+
+<Note>
+  This endpoint is **public** — no `Authorization` header is required. Protect your usage at the application layer to avoid abuse.
+</Note>
+
+<ParamField body="email" type="string" required>
+  Recipient's email address.
+</ParamField>
+
+<ParamField body="subject" type="string" required>
+  Email subject line.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  Plain-text body of the email.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Recipient's display name, used in the email greeting.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/mail \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "cajero1@kantuta.com",
+    "subject": "Bienvenido a Kantuta POS",
+    "message": "Tu cuenta ha sido creada exitosamente.",
+    "name": "Carlos"
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+
+interface SendMailRequest {
+  email: string;
+  subject: string;
+  message: string;
+  name: string;
+}
+
+export const sendMail = async (data: SendMailRequest): Promise<void> => {
+  await api.post("/mail", data);
+};
+```
+</CodeGroup>
+
+**Response:** SMTP transport confirmation object (structure depends on the mail provider configuration).

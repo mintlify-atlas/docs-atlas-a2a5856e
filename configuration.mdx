@@ -1,0 +1,183 @@
+---
+title: "Configure Kantuta POS for development and production"
+sidebarTitle: "Configuration"
+description: "Set environment variables, switch between dev and production builds, tune the 45-minute inactivity timeout, and understand the Socket.IO connection model."
+---
+
+Kantuta POS externalises every deployment-specific value through Vite environment variables. There are no hard-coded URLs in application logic — each service reads from `import.meta.env` at runtime, making it straightforward to move the same build artefact between environments or override individual values without touching source code.
+
+## Environment variables
+
+Only one environment variable is required to run Kantuta POS:
+
+| Variable | Required | Description |
+|---|---|---|
+| `VITE_API_BASE_URL` | ✅ Yes | Base URL of the NestJS REST API **without** a trailing slash |
+
+This variable is defined in `src/components/auth/services/urlBase.ts`:
+
+```typescript src/components/auth/services/urlBase.ts
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+```
+
+The `|| "http://localhost:3000"` fallback means the app will compile and start without a `.env` file, but it will attempt to contact `localhost:3000` — only useful if the NestJS backend is already running on that port.
+
+<Note>
+  Vite only exposes variables whose names begin with `VITE_` to client-side code. Any variable you add without this prefix will be `undefined` at runtime, even if it is present in your `.env` file.
+</Note>
+
+---
+
+## Development vs production setup
+
+<Tabs>
+  <Tab title="Development">
+    Create a `.env` file in the project root (next to `package.json`). Vite loads this file automatically when you run `npm run dev`.
+
+    ```env .env
+    VITE_API_BASE_URL=http://localhost:3000
+    ```
+
+    With this configuration:
+
+    - Axios services resolve to `http://localhost:3000` for all API calls.
+    - Socket.IO opens a WebSocket connection to `http://localhost:3000` (the `/api` suffix is stripped automatically by `SocketContext`).
+    - Vite's HMR dev server runs at `http://localhost:5173` with full source maps and React Refresh.
+
+    Start the development server:
+
+    ```bash
+    npm run dev
+    ```
+
+    Vite prints the local URL in the terminal. Any change to a `.env` file requires **restarting** the dev server — Vite does not hot-reload environment variables.
+  </Tab>
+
+  <Tab title="Production">
+    Create a `.env.production` file for production-specific values. Vite automatically uses this file when you run `npm run build`.
+
+    ```env .env.production
+    VITE_API_BASE_URL=https://api.your-domain.com
+    ```
+
+    Build the application:
+
+    ```bash
+    npm run build
+    ```
+
+    This command runs in two stages:
+
+    1. **`tsc -b`** — performs a full TypeScript type-check across the project. The build fails on any type error, preventing broken code from reaching production.
+    2. **`vite build`** — bundles and tree-shakes the application into the `dist/` directory with production optimisations (minification, chunk splitting, asset hashing).
+
+    Preview the production bundle locally before deploying:
+
+    ```bash
+    npm run preview
+    ```
+
+    `vite preview` serves the `dist/` folder on a local port so you can verify the build behaves identically to what will run in production.
+
+    <Tip>
+      When deploying to a static host (Nginx, Apache, Caddy), configure the server to serve `index.html` for all unmatched paths. Kantuta POS uses client-side routing via React Router 7 — direct URL access to any route (e.g. `/ventas/pos`) must be rewritten to `index.html`, not return a 404.
+    </Tip>
+  </Tab>
+</Tabs>
+
+---
+
+## Vite configuration
+
+The `vite.config.ts` file at the project root is intentionally minimal:
+
+```typescript vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import svgr from "vite-plugin-svgr";
+
+export default defineConfig({
+  plugins: [
+    react(),
+    svgr({
+      svgrOptions: {
+        icon: true,
+        exportType: "named",
+        namedExport: "ReactComponent",
+      },
+    }),
+  ],
+});
+```
+
+Two plugins are active:
+
+- **`@vitejs/plugin-react`** — enables JSX transform, React Refresh (HMR), and the React DevTools integration.
+- **`vite-plugin-svgr`** — converts SVG files to named React components (`import { ReactComponent as Logo } from './logo.svg'`), used throughout the icon system.
+
+No custom port, alias, or proxy is configured here. If your backend runs on a different origin during development and you encounter CORS errors, add a Vite dev server proxy:
+
+```typescript vite.config.ts (with proxy)
+export default defineConfig({
+  plugins: [react(), svgr(/* ... */)],
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+    },
+  },
+});
+```
+
+When using a proxy, set `VITE_API_BASE_URL` to an empty string or `http://localhost:5173` so that Axios calls hit the Vite dev server, which then forwards them to NestJS.
+
+---
+
+## Inactivity timeout
+
+`AuthContext` enforces a **45-minute inactivity timeout** on every authenticated session. The timer resets on any of the following user interactions: `mousemove`, `keydown`, `scroll`, or `click`.
+
+```typescript src/context/auth/AuthContext.tsx (relevant excerpt)
+timeoutRef.current = setTimeout(() => {
+  logoutStorage();
+}, 45 * 60 * 1000); // 45 minutos
+```
+
+When the timer fires, `logoutStorage()` clears `access_token`, `refresh_token`, and `user` from `localStorage` and redirects the browser to `/signin`. This behaviour is non-configurable via environment variables — adjust the constant in `AuthContext.tsx` if your deployment requires a different session length.
+
+The JWT itself is also validated on mount: if `access_token` is already expired when the page loads, the user is logged out immediately without waiting for the inactivity timer.
+
+---
+
+## Socket.IO connection
+
+`SocketContext` creates a single shared Socket.IO client that connects to the same host as the REST API:
+
+```typescript src/context/SocketContext.tsx
+import { API_BASE_URL } from "../components/auth/services/urlBase";
+
+const socketUrl = API_BASE_URL.replace(/\/api\/?$/, "");
+const socket = io(socketUrl);
+```
+
+The `.replace(/\/api\/?$/, "")` call strips a trailing `/api` segment from `API_BASE_URL` so that Socket.IO connects to the WebSocket root of the server rather than a REST sub-path. For example:
+
+| `VITE_API_BASE_URL` | Resolved Socket.IO URL |
+|---|---|
+| `http://localhost:3000` | `http://localhost:3000` |
+| `http://localhost:3000/api` | `http://localhost:3000` |
+| `https://api.your-domain.com` | `https://api.your-domain.com` |
+
+The socket is instantiated once at module load time and shared across the entire component tree via React Context. Any component can subscribe to real-time events with the `useSocket()` hook:
+
+```typescript
+import { useSocket } from "../context/SocketContext";
+
+const socket = useSocket();
+socket.on("venta:nueva", (data) => { /* ... */ });
+```
+
+Ensure the NestJS backend has Socket.IO enabled on the same port and that your reverse proxy (if any) is configured to support WebSocket upgrades (`Upgrade: websocket` header pass-through).

@@ -1,0 +1,64 @@
+---
+title: "Kantuta POS: React POS for Retail & Banking Correspondents"
+sidebarTitle: "Introduction"
+description: "A full-featured React 19 + TypeScript point-of-sale frontend for small retail stores and banking correspondents, with role-based access and real-time sync."
+---
+
+Kantuta POS is a modern, browser-based point-of-sale system built with React 19 and TypeScript. It centralises retail commerce management and banking correspondent operations — including cash sessions, product inventory, mobile top-ups, and agent transactions — in a single, role-aware interface that runs efficiently on Debian 12 desktops.
+
+## Who is Kantuta POS for?
+
+Kantuta POS targets two types of daily users at small commerce and banking correspondent businesses:
+
+- **Cajeros (Cashiers)** — open and close cash sessions, ring up sales at the point-of-sale terminal, process mobile top-ups (Recargas), and handle banking agent deposits and withdrawals.
+- **Administradores (Administrators)** — manage the full product catalogue, register new categories and purchases, create and edit cash registers (Cajas), manage users, and access the complete reporting suite.
+
+Route-level protection in `ProtectedRoute` enforces these roles automatically; any route flagged `allowedRoles: ['Administrador']` redirects a Cajero to the dashboard.
+
+## Feature modules
+
+| Module | What it covers |
+|---|---|
+| **Inventario** | Products catalogue, category management, low-stock alerts, and supplier purchases |
+| **Ventas / POS** | Sales history and a full point-of-sale terminal (`/ventas/pos`) |
+| **Cajas** | Cash register lifecycle — open, monitor, close, and reconcile each session |
+| **Recargas** | Mobile top-up operations, customer history, and injection history |
+| **Agentes** | BCP banking agent transactions — deposits, withdrawals, and agent reconciliation |
+| **Reportes** | Interactive charts for daily sales, inventory movement, purchases, productivity, and cash-close reports (Admin only) |
+| **Administración** | User management and role assignment |
+
+## Tech stack
+
+Kantuta POS is assembled from a carefully chosen set of libraries:
+
+- **React 19 + TypeScript** — strict typing throughout `src/types/` eliminates entire classes of runtime errors.
+- **Vite 6** — sub-second HMR in development; optimised production bundles via `tsc -b && vite build`.
+- **Axios 1.x** — all HTTP calls to the NestJS REST API, organised under `src/services/`.
+- **React Router 7** — file-based nested routing with layout nesting (`AppLayout`) and protected routes.
+- **Socket.IO Client 4** — real-time event streaming; the `SocketContext` derives the WebSocket URL automatically from `VITE_API_BASE_URL`.
+- **ApexCharts + react-apexcharts** — interactive sales and inventory charts in the Reportes module.
+- **@react-pdf/renderer** — generates printable PDF reports directly in the browser.
+- **Context API** — application state (`AuthContext`, `CajaContext`, `SocketContext`, `SidebarContext`, `ThemeContext`) without an external state manager.
+- **react-hook-form + SweetAlert2 + react-hot-toast** — form validation, confirmation dialogs, and toast notifications.
+- **Tailwind CSS 4 + clsx + tailwind-merge** — utility-first styling with safe class merging.
+
+<Note>
+  Kantuta POS is a **frontend-only** application. It requires a running NestJS REST API reachable at the URL you set in `VITE_API_BASE_URL`. Without a connected backend, authentication and all data operations will fail. See the [Configuration](/configuration) page for environment variable details.
+</Note>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, set your `.env`, and have the app running in under five minutes.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Environment variables, Vite build modes, inactivity timeout, and Socket.IO setup.
+  </Card>
+  <Card title="Inventory module" icon="box" href="/modules/inventory">
+    Products, categories, low-stock alerts, and purchase registration.
+  </Card>
+  <Card title="Sales & POS module" icon="cash-register" href="/modules/sales-pos">
+    The point-of-sale terminal, sales history, and receipt generation.
+  </Card>
+</CardGroup>

@@ -1,0 +1,223 @@
+---
+title: "Generate PDF Reports: Sales, Cash, Inventory, and Productivity"
+sidebarTitle: "Reports"
+description: "Generate downloadable PDF reports for cash sessions, sales, purchases, stock levels, and operator productivity — all restricted to Administrador."
+---
+
+The Kantuta POS Reports Center provides five distinct PDF report types, each rendered entirely in the browser using `@react-pdf/renderer`. No server-side PDF generation is involved: data is fetched from the API, passed into a React PDF component, converted to a `Blob`, and immediately triggered as a browser download. All report routes sit under `/reportes` and are protected by `ProtectedRoute allowedRoles={['Administrador']}`.
+
+<Note>
+  All report routes — including the `/reportes` index — are accessible to the **Administrador** role only. Cajero users who attempt to navigate to any `/reportes` path will be silently redirected to the dashboard home (`/`).
+</Note>
+
+## Available Reports
+
+<CardGroup cols={2}>
+  <Card title="Movimientos de Caja" icon="money-bill-wave">
+    Session-level cash movement audit. Shows every ingreso and egreso logged against a specific caja session, plus the opening balance and theoretical closing balance.
+
+    **Route:** `/reportes/caja`
+  </Card>
+  <Card title="Reporte de Ventas" icon="cart-shopping">
+    Consolidated sales audit for a custom or quick-select date range. Includes all sale transactions and their line-item detail processed by any cashier.
+
+    **Route:** `/reportes/ventas`
+  </Card>
+  <Card title="Reporte de Compras" icon="boxes-stacking">
+    Purchase history and merchandise intake by date range. Covers all supplier orders registered through the purchases module.
+
+    **Route:** `/reportes/compras`
+  </Card>
+  <Card title="Inventario de Productos" icon="warehouse">
+    Snapshot of current stock levels across all products, with semaphore color coding and projected investment and profit calculations. No date selection required.
+
+    **Route:** `/reportes/inventario`
+  </Card>
+  <Card title="Productividad por Operador" icon="chart-line">
+    Individual operator performance evaluation for a selected date range. Optionally scoped to a single operator by choosing from the registered user list.
+
+    **Route:** `/reportes/productividad`
+  </Card>
+</CardGroup>
+
+---
+
+## Report 1 — Movimientos de Caja
+
+This two-step wizard walks the administrator from selecting a physical cash drawer to picking a specific session before downloading the PDF.
+
+<Steps>
+  <Step title="Select a caja">
+    The component loads all registered cajas via `CajasService.getCajas()` and displays them in a paginated data table. Each row shows the caja name, specialty type, and current active/inactive status. Click **Ver Sesiones** to advance.
+  </Step>
+  <Step title="Select a session">
+    The selected caja's full record is fetched with `CajasService.getCajaById(id)`. Its `sesiones` array is displayed in a second table with apertura/cierre timestamps, initial balance (`monto_inicial`), and session state (`ABIERTA` / `CERRADA`). Sessions still in progress display an **EN CURSO** badge.
+  </Step>
+  <Step title="Download the PDF">
+    Clicking the **📄 PDF** button on any session row calls `GET /reportes/data/movimientos-caja/:sesionId`. The response is passed to `<MovimientosCajaPdf data={response.data} />` and rendered to a Blob. The file is saved as `movimientos-caja-sesion-{id}.pdf`.
+  </Step>
+</Steps>
+
+The generated PDF uses the `CajaHistorialPdf` component structure — an A4 landscape-friendly document with a totals summary box that breaks down ingresos, egresos, and net cash flow:
+
+```typescript
+// src/components/pdf/CajaHistorialPdf.tsx (totals shape)
+
+// data.totales: { ingresos: number; egresos: number; neto: number }
+// data.movimientos: Array<{ id; fecha; id_sesion; tipo: "INGRESO"|"EGRESO"; motivo; monto }>
+// data.caja: { id: number; nombre: string }
+```
+
+---
+
+## Report 2 — Reporte de Ventas
+
+A date-range selector with built-in quick-pick presets generates a consolidated sales PDF. The auditor name is automatically populated from the authenticated user's `name` field and embedded in the document.
+
+<Accordion title="Quick-range presets available">
+  The component ships five one-click presets that auto-fill both date inputs:
+
+  | Label | Range |
+  |---|---|
+  | Hoy | Today's date only |
+  | Esta Semana | Monday of the current week → today |
+  | Este Mes | First day of the current month → today |
+  | Mes Pasado | Full previous calendar month |
+  | Últimos 3 Meses | First day, three months ago → today |
+</Accordion>
+
+Once a valid date range is set, clicking **📄 Descargar Reporte de Ventas (PDF)** calls:
+
+```
+GET /reportes/data/ventas-rango?fechaInicio=YYYY-MM-DD&fechaFin=YYYY-MM-DD&auditor=<name>
+```
+
+The response data is passed to `<ReporteVentasPDF datos={datosReporte} rango={rangoTexto} />` and saved as `ventas-rango-{fechaInicio}-a-{fechaFin}.pdf`.
+
+<Tip>
+  If `fechaInicio` is later than `fechaFin`, the download is blocked and an inline error alert is shown. The button is also disabled while the PDF is being generated to prevent duplicate requests.
+</Tip>
+
+---
+
+## Report 3 — Reporte de Compras
+
+Identical UX pattern to the sales report — quick-range presets (Hoy, Esta Semana, Este Mes, Mes Pasado) plus manual date pickers. The endpoint and PDF component differ:
+
+```
+GET /reportes/data/compras-rango?fechaInicio=YYYY-MM-DD&fechaFin=YYYY-MM-DD&auditor=<name>
+```
+
+The response is rendered by `<ComprasRangoPdf data={response.data} />` and saved as `compras-rango-{fechaInicio}-a-{fechaFin}.pdf`.
+
+---
+
+## Report 4 — Inventario de Productos
+
+The inventory report is an instant snapshot — no date range is required. A single button initiates the download.
+
+```
+GET /reportes/data/inventario?auditor=<name>
+```
+
+The response feeds `<ReporteInventarioPDF datos={datosReporte} />` and is saved as `inventario-actual-{YYYY-MM-DD}.pdf`.
+
+### Semaphore Color Coding
+
+The inventory PDF uses a three-color stock-level indicator:
+
+| Color | Meaning |
+|---|---|
+| 🔴 Red | Stock is below the product's defined minimum threshold |
+| 🟡 Yellow | Stock is near the minimum (approaching the threshold) |
+| 🟢 Green | Stock level is healthy — above the near-minimum band |
+
+This allows managers to triage restocking priorities at a glance without having to scan individual figures.
+
+---
+
+## Report 5 — Productividad por Operador
+
+The productivity report adds an **operator filter** on top of the standard date-range picker. By default the report covers all operators; selecting a specific user from the dropdown scopes the data to that individual.
+
+<Steps>
+  <Step title="Select a date range">
+    Use the quick-range buttons (Hoy, Esta Semana, Este Mes, Mes Pasado) or fill in custom `Fecha Inicio` / `Fecha Fin` values.
+  </Step>
+  <Step title="Optionally filter by operator">
+    The dropdown is populated via `GET /usuario` and lists every registered user as `{nombres} {p_apellido} ({email})`. Leave the selection on **Todos los operadores** to include all staff.
+  </Step>
+  <Step title="Download">
+    The API call appends an optional `operadorId` query parameter when a specific operator is selected:
+
+    ```
+    GET /reportes/data/productividad-operador
+      ?fechaInicio=YYYY-MM-DD
+      &fechaFin=YYYY-MM-DD
+      [&operadorId=<id>]
+    ```
+
+    The result is rendered by `<ProductividadOperadorPdf data={response.data} />` and saved as `productividad-{fechaInicio}-a-{fechaFin}.pdf`.
+  </Step>
+</Steps>
+
+---
+
+## Point-of-Sale Sale Ticket (TicketVentaPdf)
+
+In addition to the five admin reports, Kantuta POS generates a **sale ticket PDF** immediately after each successful POS transaction. This PDF is rendered client-side using the `TicketVentaPdf` component and sized for A5 paper:
+
+```typescript
+// src/components/pdf/TicketVentaPdf.tsx
+
+interface VentaData {
+  id: number;
+  fecha: string;
+  cajero: string;
+  metodo_pago: string;
+  estado_venta: string;
+  detalles: Array<{
+    nombre: string;
+    cantidad: number;
+    precio_unitario: number;
+    subtotal: number;
+  }>;
+  total: number;
+}
+
+export const TicketVentaPdf: React.FC<{ data: VentaData }> = ({ data }) => (
+  <Document>
+    <Page size="A5" style={styles.page}>
+      {/* Header: TICKET DE VENTA / Kantuta POS */}
+      {/* Info: Nro. Ticket, Fecha, Cajero, Método Pago, Estado */}
+      {/* Line items table: Producto / Cant. / P. Unit / Subtotal */}
+      {/* Footer: TOTAL: Bs. {total} */}
+    </Page>
+  </Document>
+);
+```
+
+The ticket is generated for both **Administrador** and **Cajero** roles since any operator can process a sale. It is not accessible through the Reports Center UI — it is triggered automatically by the POS module.
+
+---
+
+## PDF Technology Reference
+
+All PDF documents in Kantuta POS are built with `@react-pdf/renderer`. The library compiles React component trees into a PDF byte stream entirely in the browser:
+
+```typescript
+import { pdf } from "@react-pdf/renderer";
+
+// Generic pattern used by every report component:
+const blob = await pdf(<SomePdfComponent data={responseData} />).toBlob();
+const downloadUrl = window.URL.createObjectURL(blob);
+const link = document.createElement("a");
+link.href = downloadUrl;
+link.setAttribute("download", "filename.pdf");
+document.body.appendChild(link);
+link.click();
+link.remove();
+window.URL.revokeObjectURL(downloadUrl);
+```
+
+Because all rendering happens on the client, no additional server infrastructure is required to produce PDF output. The only network calls made are the data-fetch requests to the `/reportes/data/*` endpoints.

@@ -1,0 +1,189 @@
+---
+title: "Process Sales at the Point-of-Sale Terminal"
+sidebarTitle: "Sales & POS"
+description: "Ring up sales, manage payment methods, and view the full transaction history from the Kantuta POS terminal."
+---
+
+The Sales module provides two complementary views: **VentasMain** at `/ventas` shows a paginated history of every recorded transaction, and **PuntoDeVenta** at `/ventas/pos` is the live cashier terminal where products are scanned, a payment method is chosen, and sales are confirmed. Both views share real-time product data pushed by a Socket.IO `dataChanged` event so stock levels are always current.
+
+<Warning>
+  The POS terminal (`/ventas/pos`) **requires an active cash-register session**. If `CajaContext.sesionActiva` is `null` when the page loads, a blocking screen is shown with a link to `/cajas`. No sale can be processed without an open shift.
+</Warning>
+
+---
+
+## VentaDTO Interfaces
+
+```typescript
+// src/modules/Ventas/interfaces/VentaDTO.ts
+export interface DetalleVentaInput {
+  id_producto: number;
+  cantidad: number;
+  precio_unitario: number;
+}
+
+export interface CrearVentaRequest {
+  metodo_pago: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+  id_sesion_caja: number;
+  detalles: DetalleVentaInput[];
+  id_user_create: number;
+}
+
+export interface ActualizarVentaRequest {
+  metodo_pago?: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+  id_sesion_caja?: number;
+  estado_venta?: "COMPLETADA" | "ANULADA" | "EDITADA";
+  motivo_edicion?: string;
+  id_user_update?: number;
+}
+```
+
+### Sale States
+
+| `estado_venta` | Description |
+|---|---|
+| `COMPLETADA` | Default state after a successful checkout. Stock has been decremented. |
+| `ANULADA` | Sale was voided after the fact. Stock is **not** automatically restored — this requires a manual purchase adjustment. |
+| `EDITADA` | Payment method or session reference was corrected after the fact, recorded via `PATCH /ventas/:id`. A `motivo_edicion` is required. |
+
+---
+
+## POS Workflow
+
+<Steps>
+  <Step title="Open an active shift">
+    Before visiting `/ventas/pos`, ensure a cash-register session is open at `/cajas`. The `CajaContext` resolves `sesionActiva` on app load. The terminal blocks immediately if no session exists.
+  </Step>
+  <Step title="Search or scan a product">
+    Type a product name or barcode into the search field at the top of the left panel. The list filters in real time matching both `nombre` and `codigo_barras`. Clicking any row calls `addToCart()`.
+  </Step>
+  <Step title="Validate stock and add to cart">
+    `addToCart()` checks `producto.stock_actual` before adding:
+    - If `stock_actual <= 0`, a SweetAlert2 **error** dialog blocks the addition ("Producto Agotado").
+    - If `stock_actual - newQuantity <= stock_minimo`, a SweetAlert2 **warning toast** fires from the top-right corner ("¡Stock Mínimo!") — the item is still added.
+    - If `quantity > stock_actual`, a SweetAlert2 **error** prevents exceeding available stock.
+  </Step>
+  <Step title="Adjust quantities in the cart">
+    Use the `−` / `+` controls or type directly into the quantity input on each cart row. Every change re-runs the stock-check logic and displays a toast when the minimum threshold is reached.
+  </Step>
+  <Step title="Select a payment method">
+    Choose from the dropdown at the bottom of the cart panel:
+
+    | Value | Label |
+    |---|---|
+    | `EFECTIVO` | Efectivo (cash) |
+    | `QR` | Pago QR / Transferencia |
+    | `TRANSFERENCIA` | Transferencia Bancaria |
+  </Step>
+  <Step title="Confirm the sale">
+    Click **"Cobrar Bs. X.XX"**. The frontend sends `POST /ventas` with the `CrearVentaRequest` payload. On HTTP 200 or 201:
+    - The cart is cleared.
+    - Products are re-fetched to reflect the updated stock.
+    - A success modal opens showing the ticket summary (items, method, session ID, and total).
+  </Step>
+  <Step title="Download the ticket PDF">
+    After the sale modal appears, the operator can navigate to `/ventas` (the history list) where a per-sale PDF ticket is available via `GET /reportes/data/producto/:id` rendered with `@react-pdf/renderer`.
+  </Step>
+</Steps>
+
+---
+
+## Payment Methods
+
+<Tabs>
+  <Tab title="EFECTIVO">
+    Cash payment. The full amount is registered against the current caja session balance as an INGRESO. No external confirmation is needed — the cashier counts physical cash.
+
+    ```typescript
+    const payload: CrearVentaRequest = {
+      metodo_pago: "EFECTIVO",
+      id_sesion_caja: sesionActiva.id,
+      detalles: cart.map(({ id_producto, cantidad, precio_unitario }) => ({
+        id_producto,
+        cantidad,
+        precio_unitario: Number(precio_unitario),
+      })),
+      id_user_create: user?.id ?? 0,
+    };
+    ```
+  </Tab>
+  <Tab title="QR">
+    Used when the customer pays via a QR code scan (e.g., Tigo Money, Banco Unión app). The POS records the payment method as `QR`; external QR confirmation is out of scope for the frontend.
+
+    ```typescript
+    const payload: CrearVentaRequest = {
+      metodo_pago: "QR",
+      id_sesion_caja: sesionActiva.id,
+      detalles: [ /* ... */ ],
+      id_user_create: user?.id ?? 0,
+    };
+    ```
+  </Tab>
+  <Tab title="TRANSFERENCIA">
+    Bank transfer. The cashier selects this method when payment arrives as an inter-bank transfer rather than physical cash or QR.
+
+    ```typescript
+    const payload: CrearVentaRequest = {
+      metodo_pago: "TRANSFERENCIA",
+      id_sesion_caja: sesionActiva.id,
+      detalles: [ /* ... */ ],
+      id_user_create: user?.id ?? 0,
+    };
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Real-Time Product Sync
+
+The POS subscribes to the Socket.IO server via `useSocket()` (provided by `SocketContext`). Whenever the backend emits `dataChanged` with `entity === "producto"`, `"venta"`, or `"product"`, the terminal calls `fetchProductos()` immediately — keeping displayed stock counts accurate even when another terminal processes a concurrent sale.
+
+```typescript
+// src/context/SocketContext.tsx
+const socketUrl = API_BASE_URL.replace(/\/api\/?$/, "");
+const socket = io(socketUrl);
+
+export const useSocket = () => useContext(SocketContext);
+```
+
+```typescript
+// Inside PuntoDeVenta.tsx
+useEffect(() => {
+  const handleDataChanged = (data: { entity: string; action: string }) => {
+    if (
+      data.entity === "producto" ||
+      data.entity === "venta" ||
+      data.entity === "product"
+    ) {
+      fetchProductos();
+    }
+  };
+  socket.on("dataChanged", handleDataChanged);
+  return () => socket.off("dataChanged", handleDataChanged);
+}, [socket, fetchProductos]);
+```
+
+---
+
+## Sales REST Endpoints
+
+```typescript
+// src/modules/Ventas/services/ventasService.ts
+export const VentasService = {
+  getVentas()                                      // GET  /ventas
+  getVentaById(id: number)                         // GET  /ventas/:id
+  createVenta(data: CrearVentaRequest)             // POST /ventas
+  updateVenta(id: number, data: ActualizarVentaRequest) // PATCH /ventas/:id
+  getReporteResumen(fechaInicio, fechaFin)          // POST /ventas/reporte-resumen
+}
+```
+
+---
+
+## URL Routes
+
+| Page | Path |
+|---|---|
+| Sales history | `/ventas` |
+| POS terminal | `/ventas/pos` |

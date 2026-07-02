@@ -1,0 +1,213 @@
+---
+title: "Kantuta POS Project Structure and Module Organization"
+sidebarTitle: "Project Structure"
+description: "A guide to the folder layout, module pattern, service layer, context providers, and routing architecture in the Kantuta POS React frontend."
+---
+
+Kantuta POS is organized around a feature-module pattern: each domain of the business (Cajas, Ventas, Inventario, Recargas, etc.) lives in its own self-contained directory under `src/modules/`, while cross-cutting concerns like auth state, caja session state, theming, and routing live outside the modules in dedicated `src/context/` and `src/router/` directories. All state management uses React Context API — there is no Redux or Zustand in this codebase.
+
+## Directory Tree
+
+```text
+src/
+├── App.tsx                        # Root: wraps providers and BrowserRouter
+├── main.tsx
+│
+├── components/                    # Shared, reusable UI components
+│   ├── auth/services/             # urlBase.ts — reads VITE_API_URL
+│   ├── common/                    # ScrollToTop, etc.
+│   ├── charts/                    # Bar & line chart wrappers
+│   ├── form/                      # Input, Switch, GroupInput, FormElements
+│   ├── header/
+│   ├── navigate/
+│   ├── pdf/                       # react-pdf document components
+│   ├── reports/
+│   ├── tables/
+│   └── ui/                        # Alert, Avatar, Badge, Button, Dropdown, Modal
+│
+├── context/                       # Global React Context providers
+│   ├── auth/
+│   │   ├── AuthContext.tsx        # JWT session, inactivity timer
+│   │   └── types/
+│   │       └── AuthContextType.ts
+│   ├── CajaContext.tsx            # Active cash-drawer session
+│   ├── SocketContext.tsx          # socket.io-client singleton
+│   ├── ThemeContext.tsx           # light / dark toggle
+│   └── SidebarContext.tsx         # Sidebar expand/collapse state
+│
+├── hooks/                         # Shared custom hooks
+│   ├── useRole.ts                 # Role extraction + isAdmin / isOperator
+│   └── useModal.ts                # isOpen / openModal / closeModal
+│
+├── icons/                         # SVG icon components
+│
+├── layout/
+│   └── AppLayout.tsx              # Sidebar + Header shell (authenticated layout)
+│
+├── modules/                       # Feature modules (one folder per business domain)
+│   ├── Administracion/
+│   │   └── Usuarios/
+│   │       ├── components/
+│   │       ├── interfaces/
+│   │       ├── services/
+│   │       └── types/
+│   ├── Agentes/
+│   │   └── pages/
+│   ├── Cajas/
+│   │   ├── components/
+│   │   ├── interfaces/
+│   │   └── services/
+│   ├── Inventario/
+│   │   ├── Categorias/  { components/ interfaces/ services/ }
+│   │   ├── Compras/     { components/ interfaces/ services/ }
+│   │   └── Productos/   { components/ interfaces/ services/ }
+│   ├── Recargas/
+│   │   ├── api/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── pages/
+│   │   └── types/
+│   ├── Reportes/
+│   │   └── components/
+│   └── Ventas/
+│       ├── components/
+│       ├── interfaces/
+│       └── services/
+│
+├── pages/                         # Top-level page files (thin wrappers / route targets)
+│   ├── AuthPages/                 # SignIn, SignUp, ResetPassword
+│   ├── Charts/
+│   ├── Dashboard/
+│   ├── Forms/
+│   ├── OtherPage/                 # NotFound
+│   ├── Tables/
+│   └── UiElements/
+│
+└── router/
+    └── ProtectedRoute.tsx         # Auth + role guard for React Router v7
+```
+
+## Layer-by-Layer Breakdown
+
+<Accordion title="src/components — Shared UI">
+  Reusable, domain-agnostic building blocks. Includes the `auth/services/urlBase.ts` helper that reads `VITE_API_URL` and exports `API_BASE_URL`, which every service file imports. PDF document components live here under `components/pdf/` and are used directly from module-level report pages.
+</Accordion>
+
+<Accordion title="src/modules — Feature Modules">
+  Each business domain gets its own subdirectory. The typical module layout is:
+
+  ```text
+  src/modules/{ModuleName}/
+  ├── components/     # React components specific to this module
+  ├── interfaces/     # DTO types for request/response payloads
+  ├── services/       # Axios calls (e.g. cajasService.ts, productosService.ts)
+  └── types/          # Domain entity types
+  ```
+
+  The `Inventario` module nests three sub-modules (`Categorias`, `Compras`, `Productos`), each following the same four-folder convention. The `Recargas` module adds a `hooks/` folder for its own domain hooks and an `api/` folder for its API wiring.
+</Accordion>
+
+<Accordion title="src/context — Global State via Context API">
+  Kantuta POS uses React Context for all shared state — no external state library is needed.
+
+  | Provider | Responsibility |
+  |---|---|
+  | `AuthContextProvider` | JWT token, user object, login/logout, inactivity timer |
+  | `CajaProvider` | Active cash-drawer session, open/close operations |
+  | `SocketProvider` | Single `socket.io-client` instance for real-time events |
+  | `ThemeProvider` | `light` / `dark` preference, persisted to `localStorage` |
+  | `SidebarProvider` | Sidebar expanded/collapsed state, mobile drawer state |
+
+  `AuthContextProvider` is the outermost wrapper in `App.tsx`, followed by `CajaProvider`. `SocketProvider`, `ThemeProvider`, and `SidebarProvider` are mounted deeper in the component tree (inside `AppLayout`).
+</Accordion>
+
+<Accordion title="src/hooks — Cross-Cutting Custom Hooks">
+  Two hooks are shared across modules:
+
+  ```typescript
+  // useRole — extracts the role name safely from the user object
+  const { roleName, isAdmin, isOperator, hasRole } = useRole();
+
+  // useModal — lightweight open/close state for any modal
+  const { isOpen, openModal, closeModal, toggleModal } = useModal();
+  ```
+
+  `useRole` reads from `useAuth()` and normalizes the role name to lowercase so that comparisons against `"administrador"` or `"operador"` are always case-insensitive.
+</Accordion>
+
+<Accordion title="src/router — ProtectedRoute">
+  `ProtectedRoute` is a React Router v7 layout route used in two modes:
+
+  1. **Auth guard only** — placed at the root `<Route path="/">` to redirect unauthenticated users to `/signin`.
+  2. **Role guard** — accepts an `allowedRoles` prop (e.g. `['Administrador']`) and redirects users whose role doesn't match back to `/`.
+
+  ```typescript
+  // Auth guard only
+  <Route path="/" element={<ProtectedRoute />}>
+
+  // Role-restricted subtree
+  <Route element={<ProtectedRoute allowedRoles={['Administrador']} />}>
+    <Route path="registrar" element={<ProductosRegister />} />
+  </Route>
+  ```
+</Accordion>
+
+<Accordion title="src/modules — Service Layer Pattern">
+  Every service file follows the same pattern: import `axios` and `API_BASE_URL`, define a local `getHeaders()` helper that reads the JWT from `localStorage`, then export a plain object of async functions.
+
+  ```typescript
+  // Example from src/modules/Cajas/services/cajasService.ts
+  import axios from 'axios';
+  import { API_BASE_URL } from '../../../components/auth/services/urlBase';
+
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+  });
+
+  export const CajasService = {
+    async getCajas() {
+      return await axios.get(`${API_BASE_URL}/cajas`, { headers: getHeaders() });
+    },
+    // ...
+  };
+  ```
+
+  The `getHeaders()` call is evaluated at the time each request fires, so it always picks up the most recent token value from storage.
+</Accordion>
+
+## Provider Nesting in App.tsx
+
+The provider order in `App.tsx` is intentional: `CajaProvider` must be inside `AuthContextProvider` because it calls `useAuth()` to read the current user ID before querying the active session.
+
+```typescript
+// src/App.tsx (simplified)
+export default function App() {
+  return (
+    <AuthContextProvider>       {/* outermost — owns JWT token & user */}
+      <CajaProvider>            {/* reads useAuth().user on mount */}
+        <Router>
+          <Routes>
+            <Route path="/" element={<ProtectedRoute />}>
+              <Route element={<AppLayout />}>
+                {/* all authenticated routes */}
+              </Route>
+            </Route>
+            <Route path="/signin" element={<SignIn />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Router>
+      </CajaProvider>
+    </AuthContextProvider>
+  );
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Auth Context" icon="lock" href="/architecture/auth-context">
+    How JWT tokens are stored, validated, and cleaned up with the 45-minute inactivity timer.
+  </Card>
+  <Card title="Caja Context" icon="cash-register" href="/architecture/caja-context">
+    How the active cash-drawer session is opened, closed, and persisted to localStorage.
+  </Card>
+</CardGroup>

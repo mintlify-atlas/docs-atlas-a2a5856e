@@ -1,0 +1,203 @@
+---
+title: "Banking Agents API: Deposits, Withdrawals, and QR Transfers"
+sidebarTitle: "Agents"
+description: "Record and manage banking agent transactions — deposits, withdrawals, and QR transfers — tied to an active cashier session in Kantuta POS."
+---
+
+The Banking Agents module handles financial transactions processed through external banking networks. Each transaction is stamped with the bank or operator name, the operation type, the amount, and a reference number, then linked to the active cashier session (`SesionCaja`). The module also tracks the commission charged to the client and any bank-side commission. Soft deletes allow transactions to be voided without losing the audit record.
+
+---
+
+## TypeScript Interface
+
+```typescript
+export interface TransaccionAgente extends BaseEntityAudit {
+  id: number;
+  banco: string;                                          // Free-text bank/operator name
+  tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
+  monto: number;
+  comision_cliente: number;                               // Commission charged to the customer
+  comision_banco: number;                                 // Commission retained by the bank
+  nro_referencia: string;                                 // Unique operation reference code
+  url_comprobante: string | null;                         // Optional receipt URL
+  fecha: string;                                          // ISO Date String
+  id_sesion_caja: number;                                 // Linked active session
+}
+```
+
+---
+
+## Endpoints
+
+### Create an Agent Transaction
+
+**`POST /agentes`** — Registers a new banking agent operation and associates it with the current cashier session.
+
+<ParamField body="banco" type="string" required>
+  Name of the bank or operator. This is a free-text field — see the note below for common values.
+</ParamField>
+
+<ParamField body="tipo_operacion" type="string" required>
+  Operation type. One of: `DEPOSITO`, `RETIRO`, or `TRANSFERENCIA_QR`.
+</ParamField>
+
+<ParamField body="monto" type="number" required>
+  Transaction amount. Minimum value: `1`.
+</ParamField>
+
+<ParamField body="comision_cliente" type="number">
+  Commission amount charged to the customer for this transaction. Optional; defaults to `0` if omitted.
+</ParamField>
+
+<ParamField body="nro_referencia" type="string" required>
+  Unique alphanumeric reference code from the banking operation (e.g., receipt number, QR transaction ID).
+</ParamField>
+
+<ParamField body="id_sesion_caja" type="number" required>
+  ID of the currently active cashier session. Transactions cannot be recorded without an open session.
+</ParamField>
+
+<ParamField body="id_user_create" type="number" required>
+  Audit user ID of the operator recording the transaction.
+</ParamField>
+
+<Note>
+  The `banco` field is free text and is not validated against a fixed enum on the backend. Common values used in production are `BCP`, `TIGO_MONEY`, `BANCO_UNION`, and `SOLI`, but any string is accepted. Ensure consistency in your UI by presenting a controlled dropdown that maps to these standard names.
+</Note>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/agentes \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "banco": "TIGO_MONEY",
+    "tipo_operacion": "DEPOSITO",
+    "monto": 350.00,
+    "comision_cliente": 5.00,
+    "nro_referencia": "TM-20240815-00123",
+    "id_sesion_caja": 12,
+    "id_user_create": 5
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { TransaccionAgente } from "./types";
+
+interface CrearTransaccionAgenteRequest {
+  banco: string;
+  tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
+  monto: number;
+  comision_cliente?: number;
+  nro_referencia: string;
+  id_sesion_caja: number;
+  id_user_create: number;
+}
+
+export const createTransaccionAgente = async (
+  data: CrearTransaccionAgenteRequest
+): Promise<TransaccionAgente> => {
+  const response = await api.post<TransaccionAgente>("/agentes", data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `TransaccionAgente`
+
+---
+
+### List All Agent Transactions
+
+**`GET /agentes`** — Returns all agent transactions across all sessions.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/agentes \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { TransaccionAgente } from "./types";
+
+export const getTransacciones = async (): Promise<TransaccionAgente[]> => {
+  const response = await api.get<TransaccionAgente[]>("/agentes");
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `TransaccionAgente[]`
+
+---
+
+### Get Transaction by ID
+
+**`GET /agentes/:id`** — Returns a single agent transaction by its ID.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/agentes/7 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { TransaccionAgente } from "./types";
+
+export const getTransaccionById = async (
+  id: number
+): Promise<TransaccionAgente> => {
+  const response = await api.get<TransaccionAgente>(`/agentes/${id}`);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `TransaccionAgente`
+
+---
+
+### Void a Transaction (Soft Delete)
+
+**`DELETE /agentes/:id`** — Marks a transaction as inactive without removing it from the database. The `estado` field is set to `false`.
+
+<CodeGroup>
+```bash curl
+curl -X DELETE https://api.kantuta.com/agentes/7 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+
+export const deleteTransaccion = async (id: number): Promise<void> => {
+  await api.delete(`/agentes/${id}`);
+};
+```
+</CodeGroup>
+
+**Response:** `void`
+
+---
+
+## Operation Types Reference
+
+| `tipo_operacion`    | Description                                                    |
+|---------------------|----------------------------------------------------------------|
+| `DEPOSITO`          | Customer deposits cash through the agent terminal.            |
+| `RETIRO`            | Customer withdraws cash through the agent terminal.           |
+| `TRANSFERENCIA_QR`  | Customer sends or receives money via QR code scan.            |
+
+---
+
+## Common `banco` Values
+
+| Value          | Description                               |
+|----------------|-------------------------------------------|
+| `BCP`          | Banco de Crédito del Perú / Bolivia       |
+| `TIGO_MONEY`   | Tigo mobile money wallet                  |
+| `BANCO_UNION`  | Banco Unión (Bolivia)                     |
+| `SOLI`         | Soli digital payment network              |

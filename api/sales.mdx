@@ -1,0 +1,441 @@
+---
+title: "Sales API: Register Transactions and Manage Sale Status"
+sidebarTitle: "Sales"
+description: "Record point-of-sale transactions, retrieve sale history, and update or cancel sales with full audit trail support in Kantuta POS."
+---
+
+The Sales module is the primary transactional engine of Kantuta POS. When a sale is created, the backend automatically calculates line-item subtotals, sums the `total`, and decrements `stock_actual` for every product in the `detalles` array — all in a single atomic operation. Sales can be in one of three states: `COMPLETADA`, `ANULADA`, or `EDITADA`, which you can update via the PATCH endpoint. All routes require a valid **Bearer Token JWT** in the `Authorization` header.
+
+## Interface Reference
+
+```typescript
+export interface BaseEntityAudit {
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string; // ISO Date String
+  updated_at: string; // ISO Date String
+}
+
+export interface DetalleVenta extends BaseEntityAudit {
+  id: number;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal: number;   // Calculated: cantidad * precio_unitario
+  id_venta: number;
+  id_producto: number;
+  producto?: Producto; // Included in GET responses
+}
+
+export interface Venta extends BaseEntityAudit {
+  id: number;
+  total: number;
+  metodo_pago: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+  fecha: string;               // ISO Date String
+  id_sesion_caja: number;
+  estado_venta: "COMPLETADA" | "ANULADA" | "EDITADA";
+  motivo_edicion: string | null;
+  fecha_modificacion: string;  // ISO Date String
+  detalles: DetalleVenta[];
+}
+```
+
+---
+
+## POST /ventas
+
+Creates a new sale, computes subtotals and the grand total, and decrements `stock_actual` for each product listed in `detalles`. Returns the complete `Venta` object with its computed total and saved line items.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Request Body
+
+<ParamField body="metodo_pago" type="string" required>
+  Payment method for this sale. One of: `"EFECTIVO"`, `"QR"`, `"TRANSFERENCIA"`.
+</ParamField>
+
+<ParamField body="id_sesion_caja" type="number" required>
+  ID of the active cash register session where this payment is received. The session must be in `ABIERTA` state.
+</ParamField>
+
+<ParamField body="detalles" type="DetalleVentaInput[]" required>
+  Array of line items for the sale. Must contain at least one entry.
+
+  <Expandable title="DetalleVentaInput fields">
+    <ParamField body="id_producto" type="number" required>
+      ID of the product being sold.
+    </ParamField>
+    <ParamField body="cantidad" type="number" required>
+      Units being sold. Must be `>= 1`.
+    </ParamField>
+    <ParamField body="precio_unitario" type="number" required>
+      Unit price at the time of sale. Must be `>= 0`. Stored as-is — the backend does not look up `precio_venta` automatically, giving you flexibility for custom pricing.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="id_user_create" type="number" required>
+  ID of the authenticated user (cashier) creating this sale. Used for audit tracking.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Auto-generated unique identifier for the sale.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Grand total calculated by the backend as the sum of all `(cantidad * precio_unitario)` subtotals.
+</ResponseField>
+
+<ResponseField name="metodo_pago" type="string" required>
+  Payment method used. One of: `EFECTIVO`, `QR`, `TRANSFERENCIA`.
+</ResponseField>
+
+<ResponseField name="fecha" type="string" required>
+  ISO 8601 timestamp of when the sale was recorded.
+</ResponseField>
+
+<ResponseField name="id_sesion_caja" type="number" required>
+  Cash session that received the payment.
+</ResponseField>
+
+<ResponseField name="estado_venta" type="string" required>
+  Initial state of the sale. Defaults to `"COMPLETADA"` upon creation.
+</ResponseField>
+
+<ResponseField name="motivo_edicion" type="string | null">
+  Reason for any modification. `null` on initial creation.
+</ResponseField>
+
+<ResponseField name="fecha_modificacion" type="string" required>
+  ISO 8601 timestamp of the last status change.
+</ResponseField>
+
+<ResponseField name="detalles" type="DetalleVenta[]" required>
+  Saved line items, each with a computed `subtotal`.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active flag, defaults to `true`.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request POST \
+  --url http://localhost:3000/ventas \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "metodo_pago": "EFECTIVO",
+    "id_sesion_caja": 5,
+    "detalles": [
+      {
+        "id_producto": 7,
+        "cantidad": 2,
+        "precio_unitario": 5.50
+      },
+      {
+        "id_producto": 12,
+        "cantidad": 1,
+        "precio_unitario": 15.00
+      }
+    ],
+    "id_user_create": 1
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Venta } from "./types";
+
+interface DetalleVentaInput {
+  id_producto: number;
+  cantidad: number;       // >= 1
+  precio_unitario: number; // >= 0
+}
+
+interface CrearVentaRequest {
+  metodo_pago: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+  id_sesion_caja: number;
+  detalles: DetalleVentaInput[];
+  id_user_create: number;
+}
+
+const createVenta = async (
+  data: Omit<CrearVentaRequest, "id_user_create">
+): Promise<Venta> => {
+  const user = JSON.parse(localStorage.getItem("user") ?? "{}");
+  const response = await axios.post<Venta>(
+    "http://localhost:3000/ventas",
+    { ...data, id_user_create: user.id },
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## GET /ventas
+
+Returns the full sales history. Every `Venta` record includes the `detalles` array with line-item details.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the sale.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Grand total of the sale.
+</ResponseField>
+
+<ResponseField name="metodo_pago" type="string" required>
+  Payment method: `EFECTIVO`, `QR`, or `TRANSFERENCIA`.
+</ResponseField>
+
+<ResponseField name="fecha" type="string" required>
+  ISO 8601 date the sale was made.
+</ResponseField>
+
+<ResponseField name="id_sesion_caja" type="number" required>
+  Cash session associated with this sale.
+</ResponseField>
+
+<ResponseField name="estado_venta" type="string" required>
+  Current state: `COMPLETADA`, `ANULADA`, or `EDITADA`.
+</ResponseField>
+
+<ResponseField name="motivo_edicion" type="string | null">
+  Reason provided when the sale was edited or cancelled.
+</ResponseField>
+
+<ResponseField name="detalles" type="DetalleVenta[]" required>
+  Line items included in this sale.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/ventas \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Venta } from "./types";
+
+const getVentas = async (): Promise<Venta[]> => {
+  const response = await axios.get<Venta[]>(
+    "http://localhost:3000/ventas",
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## GET /ventas/:id
+
+Fetches a single sale by its numeric ID, including the full `detalles` array.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the sale to retrieve.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the sale.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Grand total of the sale.
+</ResponseField>
+
+<ResponseField name="metodo_pago" type="string" required>
+  Payment method used.
+</ResponseField>
+
+<ResponseField name="fecha" type="string" required>
+  ISO 8601 timestamp of the sale.
+</ResponseField>
+
+<ResponseField name="estado_venta" type="string" required>
+  Current state: `COMPLETADA`, `ANULADA`, or `EDITADA`.
+</ResponseField>
+
+<ResponseField name="motivo_edicion" type="string | null">
+  Edit or cancellation reason, or `null`.
+</ResponseField>
+
+<ResponseField name="fecha_modificacion" type="string" required>
+  ISO 8601 timestamp of the most recent state change.
+</ResponseField>
+
+<ResponseField name="detalles" type="DetalleVenta[]" required>
+  Line items for this sale, each with `cantidad`, `precio_unitario`, `subtotal`, and an optional nested `producto` object.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/ventas/42 \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Venta } from "./types";
+
+const getVentaById = async (id: number): Promise<Venta> => {
+  const response = await axios.get<Venta>(
+    `http://localhost:3000/ventas/${id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## PATCH /ventas/:id
+
+Updates or cancels an existing sale. Use this endpoint to change the payment method, mark a sale as `ANULADA` or `EDITADA`, or record an edit reason. All fields are optional.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the sale to update.
+</ParamField>
+
+### Request Body
+
+<ParamField body="metodo_pago" type="string">
+  Updated payment method. One of: `"EFECTIVO"`, `"QR"`, `"TRANSFERENCIA"`.
+</ParamField>
+
+<ParamField body="id_sesion_caja" type="number">
+  Updated cash session reference.
+</ParamField>
+
+<ParamField body="estado_venta" type="string">
+  New state for the sale. One of: `"COMPLETADA"`, `"ANULADA"`, `"EDITADA"`. Use `"ANULADA"` to cancel a sale.
+</ParamField>
+
+<ParamField body="motivo_edicion" type="string">
+  A free-text explanation for the change. Required by convention when setting `estado_venta` to `"ANULADA"` or `"EDITADA"`.
+</ParamField>
+
+<ParamField body="id_user_update" type="number">
+  ID of the authenticated user performing this update. Used for audit tracking.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the updated sale.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Grand total of the sale (unchanged by a status update).
+</ResponseField>
+
+<ResponseField name="metodo_pago" type="string" required>
+  Current payment method after the update.
+</ResponseField>
+
+<ResponseField name="estado_venta" type="string" required>
+  Updated state: `COMPLETADA`, `ANULADA`, or `EDITADA`.
+</ResponseField>
+
+<ResponseField name="motivo_edicion" type="string | null">
+  The recorded reason for this modification.
+</ResponseField>
+
+<ResponseField name="fecha_modificacion" type="string" required>
+  ISO 8601 timestamp updated to reflect the time of this change.
+</ResponseField>
+
+<ResponseField name="id_user_update" type="number | null">
+  ID of the user who performed this update.
+</ResponseField>
+
+<ResponseField name="detalles" type="DetalleVenta[]" required>
+  Unchanged line items of the sale.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request PATCH \
+  --url http://localhost:3000/ventas/42 \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "estado_venta": "ANULADA",
+    "motivo_edicion": "Cliente solicitó devolución del producto",
+    "id_user_update": 1
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Venta } from "./types";
+
+interface ActualizarVentaRequest {
+  metodo_pago?: "EFECTIVO" | "QR" | "TRANSFERENCIA";
+  id_sesion_caja?: number;
+  estado_venta?: "COMPLETADA" | "ANULADA" | "EDITADA";
+  motivo_edicion?: string;
+  id_user_update?: number;
+}
+
+const updateVenta = async (
+  id: number,
+  data: ActualizarVentaRequest
+): Promise<Venta> => {
+  const user = JSON.parse(localStorage.getItem("user") ?? "{}");
+  const response = await axios.patch<Venta>(
+    `http://localhost:3000/ventas/${id}`,
+    { ...data, id_user_update: user.id },
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>

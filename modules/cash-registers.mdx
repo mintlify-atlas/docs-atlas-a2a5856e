@@ -1,0 +1,230 @@
+---
+title: "Open, Manage, and Close Cash Register Sessions"
+sidebarTitle: "Cash Registers"
+description: "Create cajas, open and close shifts with monto_inicial and arqueo, and record INGRESO/EGRESO movements in Kantuta POS."
+---
+
+The Cajas module manages the physical (or virtual) cash drawers used by every shift in Kantuta POS. A **Caja** is a named register entity with a specialization type. Operators open a **SesionCaja** at the start of their shift with an opening balance, record any ad-hoc cash movements during the shift, and close the session with a physical count at the end. The backend then calculates the theoretical balance and difference automatically.
+
+<CardGroup cols={2}>
+  <Card title="Caja List" icon="cash-register" href="/modules/cash-registers#caja-list">
+    View all configured registers, their specialization, and current session status at `/cajas`.
+  </Card>
+  <Card title="Caja Control" icon="sliders" href="/modules/cash-registers#cajascontrol-page">
+    Open or close a session, record movements, and download the shift PDF report at `/cajas/control/:id`.
+  </Card>
+</CardGroup>
+
+---
+
+## Caja Types
+
+Each caja is configured with one of three `especialidad` values that determine which transaction types are allowed on its sessions:
+
+| Especialidad | Allowed Transactions |
+|---|---|
+| `SOLO_VENTAS` | Product sales only. Cannot process agent banking transactions. |
+| `SOLO_AGENTES` | Banking agent operations only. Cannot process regular product sales. |
+| `MIXTA` | Both sales and agent transactions are permitted. |
+
+---
+
+## TypeScript Interfaces
+
+### Caja & SesionCaja
+
+```typescript
+// src/modules/Cajas/interfaces/Caja.ts
+export interface Caja {
+  id: number;
+  nombre: string;
+  especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
+  sesiones?: SesionCaja[];
+  saldo: number;
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SesionCaja {
+  id: number;
+  monto_inicial: number;
+  monto_final_teorico: number | null;  // Computed by the backend on close
+  monto_final_real: number | null;     // Entered by the cashier at close
+  diferencia: number | null;           // monto_final_real - monto_final_teorico
+  estado_sesion: "ABIERTA" | "CERRADA";
+  fecha_apertura: string;
+  fecha_cierre: string | null;
+  id_caja: number;
+  caja?: Caja;
+  id_usuario: number;
+  estado: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MovimientoCaja {
+  id: number;
+  tipo: "INGRESO" | "EGRESO";
+  monto: number;
+  motivo: string;
+  fecha: string;
+  id_sesion_caja: number;
+}
+```
+
+### Request DTOs
+
+```typescript
+// src/modules/Cajas/interfaces/CajaDTO.ts
+export interface CrearCajaRequest {
+  nombre: string;
+  especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
+  saldo?: number;
+  id_user_create?: number;
+}
+
+export interface AbrirCajaRequest {
+  id_caja: number;
+  monto_inicial: number;  // Opening cash float in Bs.
+  id_usuario: number;
+  id_user_create: number;
+}
+
+export interface CerrarCajaRequest {
+  monto_final_real: number;  // Physical cash counted at close
+  id_user_update: number;
+}
+
+export interface CrearMovimientoRequest {
+  tipo: "INGRESO" | "EGRESO";
+  monto: number;
+  motivo: string;            // Free-text justification
+  id_sesion_caja: number;
+  id_user_create: number;
+}
+```
+
+---
+
+## Open-Shift Workflow
+
+<Steps>
+  <Step title="Navigate to the Caja list">
+    Go to `/cajas`. The list shows all registered cajas with their current session status. Click the **Control** button on the row you want to open.
+  </Step>
+  <Step title="Enter the opening balance">
+    On the **CajasControl** page (`/cajas/control/:id`), find the **"Abrir Nueva Sesión"** panel. Enter the physical cash float in the **Monto Inicial** field (in Bolivianos).
+  </Step>
+  <Step title="Open the session">
+    Click **Abrir Caja**. The frontend calls `CajasService.abrirSesion()` which posts to `POST /cajas/abrir`. On success, `CajaContext` globally updates `sesionActiva` — this unlocks the POS terminal and the Recargas module.
+  </Step>
+  <Step title="Record movements during the shift">
+    Use the **Movimiento de Efectivo** panel to register any off-sale cash events (e.g., paying a delivery driver, receiving a petty-cash advance). Select `INGRESO` or `EGRESO`, enter the amount and a mandatory `motivo`, and click **Registrar**.
+  </Step>
+  <Step title="Close the session (arqueo)">
+    At end of shift, count the physical cash in the drawer and enter the amount in **Dinero Físico en Caja**. Click **Confirmar Cierre de Caja**. The backend:
+    1. Computes `monto_final_teorico` = `monto_inicial` + all INGRESOs − all EGRESOs.
+    2. Records `monto_final_real` as submitted.
+    3. Calculates `diferencia` = `monto_final_real − monto_final_teorico`.
+    4. Sets `estado_sesion` to `CERRADA`.
+  </Step>
+  <Step title="Download the shift PDF">
+    Before or after closing, click **📄 Descargar Extracto (PDF)** to generate a `MovimientosCajaPdf` report for the active session via `GET /reportes/data/movimientos-caja/:id_sesion`.
+  </Step>
+</Steps>
+
+---
+
+## CajasControl Page
+
+The `/cajas/control/:id` page provides a two-panel layout:
+
+<Tabs>
+  <Tab title="Status & Session Panel">
+    Shows the current session state with a green banner when open or a grey "Caja Cerrada" notice when idle.
+
+    **Open session fields:**
+    - Session ID
+    - `fecha_apertura` (formatted in `es-BO` locale)
+    - `monto_inicial`
+    - Link to download the session PDF
+
+    **Close session fields:**
+    - `monto_final_real` — pre-filled by the live balance fetched from `GET /cajas/sesion/:id/balance`
+    - Confirm button triggers `cerrarCaja(montoFinalReal, sesionActiva.id)`
+  </Tab>
+  <Tab title="Cash Movement Panel">
+    Allows recording of any manual cash event against the open session.
+
+    | Field | Type | Notes |
+    |---|---|---|
+    | Tipo de Movimiento | `INGRESO` \| `EGRESO` | Affects the session's theoretical balance. |
+    | Monto | `number` | Minimum Bs. 0.10. Disabled when no session is open. |
+    | Motivo / Justificación | `string` | Required free-text description. Disabled when no session is open. |
+
+    The button label and color change to reflect the selected type: green for INGRESO, orange for EGRESO.
+  </Tab>
+</Tabs>
+
+<Note>
+  The **CajasControl** page also subscribes to the Socket.IO `dataChanged` event for the `caja` entity, so the session status panel refreshes automatically if another user performs an action on the same register.
+</Note>
+
+---
+
+## Internal Movement Types
+
+| Type | Effect on balance | Example use case |
+|---|---|---|
+| `INGRESO` | Increases `monto_final_teorico` | Petty cash received, change fund replenishment. |
+| `EGRESO` | Decreases `monto_final_teorico` | Purchase payment, supplier invoice settlement. |
+
+Purchase registrations with `pagar_con_caja: true` automatically create an `EGRESO` — no manual entry is required.
+
+---
+
+## Role Restrictions
+
+<Accordion title="Administrador-only actions">
+  | Action | Route |
+  |---|---|
+  | Create caja | `/cajas/registrar` |
+  | Edit caja name/type | `/cajas/editar/:id` |
+  | Delete caja | Button on `/cajas` list |
+
+  Any authenticated user can open and close their own session on any caja they have access to, and can record movements on an open session.
+</Accordion>
+
+---
+
+## REST Endpoints
+
+```typescript
+// src/modules/Cajas/services/cajasService.ts
+export const CajasService = {
+  getCajas()                                    // GET    /cajas
+  getCajaById(id)                               // GET    /cajas/:id
+  createCaja(data: CrearCajaRequest)            // POST   /cajas
+  updateCaja(id, data)                          // PATCH  /cajas/:id
+  deleteCaja(id)                                // DELETE /cajas/:id
+  getSesionActivaUsuario(idUsuario)             // GET    /cajas/sesion-activa/:idUsuario
+  abrirSesion(data: AbrirCajaRequest)           // POST   /cajas/abrir
+  cerrarSesion(id_sesion, data: CerrarCajaRequest) // PATCH /cajas/sesion/:id/cerrar
+  getSesionBalance(id_sesion)                   // GET    /cajas/sesion/:id/balance
+  registrarMovimiento(data: CrearMovimientoRequest) // POST /cajas/movimiento
+}
+```
+
+---
+
+## URL Routes
+
+| Page | Path |
+|---|---|
+| Caja list | `/cajas` |
+| Caja control & session management | `/cajas/control/:id` |
+| Register new caja *(Admin)* | `/cajas/registrar` |
+| Edit caja *(Admin)* | `/cajas/editar/:id` |

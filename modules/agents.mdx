@@ -1,0 +1,143 @@
+---
+title: "Handle Banking Agent Transactions with Kantuta POS"
+sidebarTitle: "Banking Agents"
+description: "Process deposits, withdrawals, and QR transfers on behalf of partner banks using Kantuta POS's banking agent module."
+---
+
+The Banking Agents module (Agentes) turns Kantuta POS into a **banking correspondent terminal**. Staff can accept cash deposits, pay out cash withdrawals, and process QR transfers on behalf of partner institutions such as BCP, Tigo Money, Banco Unión, SOLI, and others. Each transaction records the bank name, operation type, amounts, commissions, and a unique bank reference code for reconciliation.
+
+The module also integrates a **WhatsApp gateway** at `/whatsapp` — a QR-code-based session initialization page that connects the backend's WhatsApp service so that automated notifications and the intelligent sales agent can be sent to customers over WhatsApp.
+
+<Warning>
+  Agent transactions require a cash register with `especialidad` set to `SOLO_AGENTES` or `MIXTA`. A caja configured as `SOLO_VENTAS` cannot be used for banking agent operations. Ensure the correct register type is open before processing any agent transaction.
+</Warning>
+
+---
+
+## TransaccionAgente Entity
+
+Banking agent transactions are modelled around a `TransaccionAgente` record. The fields below represent the full shape of the entity as used throughout the module:
+
+```typescript
+// TransaccionAgente — logical entity shape
+export interface TransaccionAgente {
+  id: number;
+  banco: string;                           // Free-text bank name (e.g. "BCP", "Tigo Money")
+  tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
+  monto: number;                           // Transaction principal in Bs.
+  comision_cliente: number;                // Fee charged to the customer in Bs.
+  comision_banco: number;                  // Fee paid back by the bank in Bs.
+  nro_referencia: string;                  // Unique bank-issued reference code
+  id_sesion_caja: number;
+  estado: boolean;                         // false = soft-deleted
+  id_user_create: number;
+  id_user_update?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CrearTransaccionAgenteRequest {
+  banco: string;
+  tipo_operacion: "DEPOSITO" | "RETIRO" | "TRANSFERENCIA_QR";
+  monto: number;
+  comision_cliente: number;
+  comision_banco: number;
+  nro_referencia: string;
+  id_sesion_caja: number;
+  id_user_create?: number;
+}
+```
+
+<Note>
+  `nro_referencia` is the **unique bank reference code** issued by the partner bank for each transaction (e.g., a receipt number or system-generated reference ID). It must be recorded accurately — it is the primary key used to reconcile agent transactions with the bank's own records during daily settlement.
+</Note>
+
+---
+
+## Operation Types
+
+<Tabs>
+  <Tab title="DEPOSITO">
+    The customer hands over cash and the agent credits the equivalent amount to the customer's bank account at the partner institution.
+
+    **Cash flow:** Physical cash enters the caja drawer → an INGRESO of `monto` is recorded on the session.
+
+    | Field | Notes |
+    |---|---|
+    | `banco` | Partner institution name (free text). |
+    | `monto` | Amount deposited by the customer in Bs. |
+    | `comision_cliente` | Service fee charged to the customer in Bs. |
+    | `comision_banco` | Commission received from the bank in Bs. |
+    | `nro_referencia` | Bank-issued receipt or transaction reference. |
+  </Tab>
+  <Tab title="RETIRO">
+    The customer presents a withdrawal order and the agent pays out cash from the caja drawer.
+
+    **Cash flow:** Cash leaves the caja drawer → an EGRESO of `monto` is recorded on the session.
+
+    | Field | Notes |
+    |---|---|
+    | `banco` | Partner institution name (free text). |
+    | `monto` | Amount withdrawn by the customer in Bs. |
+    | `comision_cliente` | Service fee charged to the customer in Bs. |
+    | `comision_banco` | Commission received from the bank in Bs. |
+    | `nro_referencia` | Bank-issued authorization or transaction reference. |
+  </Tab>
+  <Tab title="TRANSFERENCIA_QR">
+    The agent scans a QR code to transfer funds between accounts or wallets — typically used for Tigo Money or similar mobile-wallet QR-based payments.
+
+    **Cash flow:** Varies by bank agreement; the cash and commission movements are handled per the bank's integration protocol and recorded in `comision_cliente` and `comision_banco` accordingly.
+
+    | Field | Notes |
+    |---|---|
+    | `banco` | Wallet or transfer service name (e.g., "Tigo Money"). |
+    | `monto` | Transfer amount in Bs. |
+    | `comision_cliente` | Service fee charged to the customer in Bs. |
+    | `comision_banco` | Commission received from the wallet provider in Bs. |
+    | `nro_referencia` | QR transaction ID or bank confirmation code. |
+  </Tab>
+</Tabs>
+
+---
+
+## Caja Specialization Requirement
+
+| Caja type | Can process agent transactions? |
+|---|---|
+| `SOLO_VENTAS` | ❌ No |
+| `SOLO_AGENTES` | ✅ Yes |
+| `MIXTA` | ✅ Yes |
+
+Before opening an agent shift, confirm the register's `especialidad` in the Caja list at `/cajas`. If only `SOLO_VENTAS` cajas are available, contact an **Administrador** to create or reconfigure a register.
+
+---
+
+## Soft-Delete Behavior
+
+Deleting an agent transaction (`DELETE /agentes/:id`) does **not** remove the record from the database. Instead, the backend sets `estado` to `false`. The record remains visible in audit logs and reports but is excluded from active balance computations. This preserves the full transaction history for regulatory compliance and bank reconciliation.
+
+---
+
+## WhatsApp Gateway Page
+
+The `/whatsapp` route (served by `WhatsAppMain`) connects Kantuta POS to a WhatsApp Business session on the backend. On page load, it calls `GET /whatsapp/connect` to check the current session state:
+
+| Response | What the UI shows |
+|---|---|
+| `qrBase64` present | A scannable QR code image with "Esperando escaneo…" pulse label. |
+| Session already connected | A green checkmark and the connection confirmation message. |
+| Backend unreachable | An error alert: "Error de conexión al servidor de WhatsApp." |
+
+Click **Recargar Estado / QR** at any time to re-check the connection or refresh an expired QR code.
+
+<Tip>
+  Once the WhatsApp session is active, the backend can send automated sale confirmations, low-stock alerts, and agent transaction receipts directly to customer phone numbers — no additional configuration is needed in the frontend.
+</Tip>
+
+---
+
+## URL Routes
+
+| Page | Path |
+|---|---|
+| WhatsApp gateway / agent panel | `/whatsapp` |

@@ -1,0 +1,298 @@
+---
+title: "Recargas API: Mobile Top-Ups and Operator Balance Injections"
+sidebarTitle: "Recargas"
+description: "Top up customer mobile lines and inject operator balances for Tigo, Entel, and Viva through the Kantuta POS Recargas API, linked to active cashier sessions."
+---
+
+The Recargas module handles two distinct operations: **client top-ups** (`RecargaCliente`) — where a customer's mobile number is recharged from the corresponding operator's available balance — and **operator balance injections** (`InyeccionOperadora`) — where new airtime credit is loaded into an operator's pool to replenish depleted stock. Both operations are tied to an active `SesionCaja` and tracked with full audit history. The `OperadoraSaldo` resource lets you query each operator's current available balance before processing a top-up.
+
+---
+
+## TypeScript Interfaces and Enums
+
+```typescript
+export enum OperadoraNombre {
+  TIGO  = "Tigo",
+  ENTEL = "Entel",
+  VIVA  = "Viva",
+}
+
+export interface OperadoraSaldo {
+  id: number;
+  nombre_operadora: OperadoraNombre;
+  saldo_actual: number | string;
+  estado: boolean;
+  created_at: string; // ISO Date String
+  updated_at: string; // ISO Date String
+}
+
+export interface RecargaCliente {
+  id: number;
+  operadora: OperadoraNombre;
+  numero_cliente: string;
+  monto: number | string;
+  fecha_hora: string;      // ISO Date String
+  id_caja_sesion: number;
+  caja_sesion?: SesionCaja;
+  estado: boolean;
+}
+
+export interface InyeccionOperadora {
+  id: number;
+  operadora_destino: OperadoraNombre;
+  monto: number | string;
+  fecha_hora: string;    // ISO Date String
+  id_caja_origen: number;
+  caja_origen?: SesionCaja;
+  estado: boolean;
+}
+
+export interface CreateRecargaClienteDto {
+  operadora: OperadoraNombre | "";
+  numero_cliente: string;
+  monto: number;
+  id_caja_sesion: number;
+}
+
+export interface CreateInyeccionDto {
+  operadora_destino: OperadoraNombre | "";
+  monto: number;
+  id_caja_sesion: number;
+}
+```
+
+---
+
+## Endpoints
+
+### Get Operator Balances
+
+**`GET /recargas/operadoras/saldos`** — Returns the current available balance for each configured operator (Tigo, Entel, Viva). Check this before processing a top-up to avoid rejections due to insufficient operator credit.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/recargas/operadoras/saldos \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { OperadoraSaldo } from "./types";
+
+export const getSaldos = async (): Promise<OperadoraSaldo[]> => {
+  const response = await api.get<OperadoraSaldo[]>(
+    "/recargas/operadoras/saldos"
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `OperadoraSaldo[]`
+
+<ResponseField name="id" type="number">
+  Unique operator record ID.
+</ResponseField>
+
+<ResponseField name="nombre_operadora" type="string">
+  Operator name. One of: `"Tigo"`, `"Entel"`, or `"Viva"`.
+</ResponseField>
+
+<ResponseField name="saldo_actual" type="number | string">
+  Current available credit balance for this operator's pool.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean">
+  Whether the operator is active and available for transactions.
+</ResponseField>
+
+---
+
+### Create a Client Top-Up
+
+**`POST /recargas/cliente`** — Processes a mobile top-up for a customer. Deducts the specified amount from the corresponding operator's balance pool and records the transaction against the active session.
+
+<ParamField body="operadora" type="string" required>
+  Target mobile operator. Must be one of the `OperadoraNombre` enum values: `"Tigo"`, `"Entel"`, or `"Viva"`.
+</ParamField>
+
+<ParamField body="numero_cliente" type="string" required>
+  The customer's mobile phone number to recharge (e.g., `"76543210"`).
+</ParamField>
+
+<ParamField body="monto" type="number" required>
+  Top-up amount in local currency. Must be greater than `0`.
+</ParamField>
+
+<ParamField body="id_caja_sesion" type="number" required>
+  ID of the currently active cashier session.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/recargas/cliente \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operadora": "Tigo",
+    "numero_cliente": "76543210",
+    "monto": 30,
+    "id_caja_sesion": 12
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import {
+  CreateRecargaClienteDto,
+  RecargaCliente,
+  OperadoraNombre,
+} from "./types";
+
+export const createRecargaCliente = async (
+  data: CreateRecargaClienteDto
+): Promise<RecargaCliente> => {
+  const response = await api.post<RecargaCliente>("/recargas/cliente", data);
+  return response.data;
+};
+
+// Example usage:
+const recarga = await createRecargaCliente({
+  operadora: OperadoraNombre.TIGO,
+  numero_cliente: "76543210",
+  monto: 30,
+  id_caja_sesion: 12,
+});
+```
+</CodeGroup>
+
+**Response:** `RecargaCliente`
+
+---
+
+### Create an Operator Balance Injection
+
+**`POST /recargas/inyeccion`** — Injects (adds) credit into an operator's balance pool. Used when the system's available balance for an operator runs low and needs to be replenished. The injection cost is recorded as an outflow against the active session's cash.
+
+<ParamField body="operadora_destino" type="string" required>
+  Operator receiving the balance injection. One of: `"Tigo"`, `"Entel"`, or `"Viva"`.
+</ParamField>
+
+<ParamField body="monto" type="number" required>
+  Amount of credit to inject into the operator's pool.
+</ParamField>
+
+<ParamField body="id_caja_sesion" type="number" required>
+  ID of the active session from which the cash outflow originates.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/recargas/inyeccion \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operadora_destino": "Entel",
+    "monto": 500,
+    "id_caja_sesion": 12
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import {
+  CreateInyeccionDto,
+  InyeccionOperadora,
+  OperadoraNombre,
+} from "./types";
+
+export const createInyeccion = async (
+  data: CreateInyeccionDto
+): Promise<InyeccionOperadora> => {
+  const response = await api.post<InyeccionOperadora>(
+    "/recargas/inyeccion",
+    data
+  );
+  return response.data;
+};
+
+// Example usage:
+const inyeccion = await createInyeccion({
+  operadora_destino: OperadoraNombre.ENTEL,
+  monto: 500,
+  id_caja_sesion: 12,
+});
+```
+</CodeGroup>
+
+**Response:** `InyeccionOperadora`
+
+---
+
+### Get Client Top-Up History
+
+**`GET /recargas/historial/clientes`** — Returns the full history of client top-up transactions.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/recargas/historial/clientes \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { RecargaCliente } from "./types";
+
+export const getHistorialClientes = async (): Promise<RecargaCliente[]> => {
+  const response = await api.get<RecargaCliente[]>(
+    "/recargas/historial/clientes"
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `RecargaCliente[]`
+
+---
+
+### Get Operator Injection History
+
+**`GET /recargas/historial/inyecciones`** — Returns the full history of operator balance injections.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/recargas/historial/inyecciones \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { InyeccionOperadora } from "./types";
+
+export const getHistorialInyecciones = async (): Promise<
+  InyeccionOperadora[]
+> => {
+  const response = await api.get<InyeccionOperadora[]>(
+    "/recargas/historial/inyecciones"
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `InyeccionOperadora[]`
+
+---
+
+## Operator Names Reference
+
+| Enum Value           | String Value | Description                     |
+|----------------------|--------------|---------------------------------|
+| `OperadoraNombre.TIGO`  | `"Tigo"`  | Tigo mobile network (Bolivia)   |
+| `OperadoraNombre.ENTEL` | `"Entel"` | Entel mobile network (Bolivia)  |
+| `OperadoraNombre.VIVA`  | `"Viva"`  | Viva mobile network (Bolivia)   |
+
+<Note>
+  Always use the string values from the `OperadoraNombre` enum when sending requests. Sending a raw string that does not match one of the three defined values may result in a validation error from the backend.
+</Note>

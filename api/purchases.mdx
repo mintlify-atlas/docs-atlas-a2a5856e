@@ -1,0 +1,277 @@
+---
+title: "Purchases API: Record Stock Intake and Supplier Orders"
+sidebarTitle: "Purchases"
+description: "Register stock purchases from suppliers in Kantuta POS, automatically updating product inventory levels and optional cash register outflows."
+---
+
+The Purchases module lets you record the intake of goods from suppliers. When a purchase is created, the backend automatically increments the `stock_actual` of every product listed in the `detalles` array, keeping your inventory counts accurate without a separate update call. All routes require a valid **Bearer Token JWT** in the `Authorization` header.
+
+## Interface Reference
+
+```typescript
+export interface BaseEntityAudit {
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string; // ISO Date String
+  updated_at: string; // ISO Date String
+}
+
+export interface DetalleCompra extends BaseEntityAudit {
+  id: number;
+  cantidad: number;
+  costo_unitario: number;
+  subtotal: number; // Calculated: cantidad * costo_unitario
+  id_producto: number;
+  producto?: Producto; // Pre-loaded in GET /compras responses
+}
+
+export interface Compra extends BaseEntityAudit {
+  id: number;
+  total: number;            // Sum of all detalle subtotals
+  proveedor: string | null; // Supplier name, or null if not specified
+  pagado_con_caja: boolean; // Whether payment was drawn from a cash session
+  id_sesion_caja: number | null;
+  fecha: string;            // ISO Date String
+  detalles: DetalleCompra[];
+}
+```
+
+---
+
+## POST /compras
+
+Records a new purchase order, increments stock for each product in `detalles`, and optionally registers an automatic cash outflow (EGRESO) in the specified `SesionCaja`.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+<Warning>
+  When `pagar_con_caja` is set to `true`, the backend automatically creates an **EGRESO** (cash outflow) movement in the `SesionCaja` identified by `id_sesion_caja`. The movement amount equals the calculated `total` of the purchase. Make sure the target cash session is **ABIERTA** before submitting, or the request will fail. Always pass `id_sesion_caja` when `pagar_con_caja` is `true`.
+</Warning>
+
+### Request Body
+
+<ParamField body="proveedor" type="string">
+  Name of the supplier or vendor. Optional — pass `null` or omit for anonymous purchases.
+</ParamField>
+
+<ParamField body="pagar_con_caja" type="boolean" required>
+  Set to `true` if the purchase total should be paid from the POS cash register, which creates an automatic EGRESO movement in the specified caja session.
+</ParamField>
+
+<ParamField body="id_sesion_caja" type="number">
+  ID of the open cash register session to deduct from. **Required** when `pagar_con_caja` is `true`. Ignored when `pagar_con_caja` is `false`.
+</ParamField>
+
+<ParamField body="detalles" type="DetalleCompraInput[]" required>
+  Array of line items for this purchase. Must contain at least one entry.
+
+  <Expandable title="DetalleCompraInput fields">
+    <ParamField body="id_producto" type="number" required>
+      ID of the product being purchased.
+    </ParamField>
+    <ParamField body="cantidad" type="number" required>
+      Number of units received. Must be `>= 1`.
+    </ParamField>
+    <ParamField body="costo_unitario" type="number" required>
+      Cost per unit for this purchase. Must be `>= 0`. The backend also updates the product's `costo_compra` field to this value.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="id_user_create" type="number" required>
+  ID of the authenticated user creating the purchase record. Used for audit tracking.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Auto-generated unique identifier for the purchase.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Sum of all `(cantidad * costo_unitario)` subtotals, calculated by the backend.
+</ResponseField>
+
+<ResponseField name="proveedor" type="string | null">
+  Supplier name or `null`.
+</ResponseField>
+
+<ResponseField name="pagado_con_caja" type="boolean" required>
+  Whether the purchase triggered a cash outflow.
+</ResponseField>
+
+<ResponseField name="id_sesion_caja" type="number | null">
+  The cash session used for payment, or `null`.
+</ResponseField>
+
+<ResponseField name="fecha" type="string" required>
+  ISO 8601 timestamp of when the purchase was recorded.
+</ResponseField>
+
+<ResponseField name="detalles" type="DetalleCompra[]" required>
+  The saved purchase line items, each with a computed `subtotal`.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active flag, defaults to `true`.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request POST \
+  --url http://localhost:3000/compras \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "proveedor": "Distribuidora Central",
+    "pagar_con_caja": true,
+    "id_sesion_caja": 5,
+    "detalles": [
+      {
+        "id_producto": 7,
+        "cantidad": 48,
+        "costo_unitario": 3.20
+      },
+      {
+        "id_producto": 12,
+        "cantidad": 24,
+        "costo_unitario": 8.50
+      }
+    ],
+    "id_user_create": 1
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Compra } from "./types";
+
+interface DetalleCompraInput {
+  id_producto: number;
+  cantidad: number;    // >= 1
+  costo_unitario: number; // >= 0
+}
+
+interface CrearCompraRequest {
+  proveedor?: string;
+  pagar_con_caja: boolean;
+  id_sesion_caja?: number;
+  detalles: DetalleCompraInput[];
+  id_user_create: number;
+}
+
+const createCompra = async (
+  data: CrearCompraRequest
+): Promise<Compra> => {
+  const user = JSON.parse(localStorage.getItem("user") ?? "{}");
+  const response = await axios.post<Compra>(
+    "http://localhost:3000/compras",
+    { ...data, id_user_create: user.id },
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## GET /compras
+
+Returns the full purchase history. Each `Compra` record includes its `detalles` array, and each detail includes the nested `producto` object so you can display product names and details without additional requests.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the purchase record.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Total cost of the purchase (sum of all line-item subtotals).
+</ResponseField>
+
+<ResponseField name="proveedor" type="string | null">
+  Supplier name, or `null` if not recorded.
+</ResponseField>
+
+<ResponseField name="pagado_con_caja" type="boolean" required>
+  Whether a cash outflow was created for this purchase.
+</ResponseField>
+
+<ResponseField name="id_sesion_caja" type="number | null">
+  The cash session that was charged, or `null`.
+</ResponseField>
+
+<ResponseField name="fecha" type="string" required>
+  ISO 8601 timestamp of the purchase.
+</ResponseField>
+
+<ResponseField name="detalles" type="DetalleCompra[]" required>
+  Line items for the purchase.
+
+  <Expandable title="DetalleCompra fields">
+    <ResponseField name="id" type="number" required>
+      Unique identifier for the line item.
+    </ResponseField>
+    <ResponseField name="cantidad" type="number" required>
+      Units received in this line.
+    </ResponseField>
+    <ResponseField name="costo_unitario" type="number" required>
+      Cost per unit at time of purchase.
+    </ResponseField>
+    <ResponseField name="subtotal" type="number" required>
+      Computed value: `cantidad * costo_unitario`.
+    </ResponseField>
+    <ResponseField name="id_producto" type="number" required>
+      Foreign key to the product.
+    </ResponseField>
+    <ResponseField name="producto" type="Producto">
+      Populated product object, including current stock and pricing.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active flag for the purchase record.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/compras \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Compra } from "./types";
+
+const getCompras = async (): Promise<Compra[]> => {
+  const response = await axios.get<Compra[]>(
+    "http://localhost:3000/compras",
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>

@@ -1,0 +1,128 @@
+{
+  "projectType": "saas",
+  "projectName": "Kantuta POS",
+  "projectDescription": "A React + TypeScript point-of-sale frontend for managing sales, inventory, cash registers, mobile top-ups, banking agent transactions, and reporting — designed to run on Debian 12 and connect to a NestJS REST API.",
+  "theme": "almond",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#EFF6FF",
+  "darkColor": "#1E3A5F",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Core Modules",
+            "pages": [
+              "modules/inventory",
+              "modules/sales-pos",
+              "modules/cash-registers",
+              "modules/recargas",
+              "modules/agents"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "admin/users-roles",
+              "admin/reports"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/project-structure",
+              "architecture/auth-context",
+              "architecture/caja-context"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/categories",
+              "api/products",
+              "api/purchases",
+              "api/sales",
+              "api/cash-registers",
+              "api/agents",
+              "api/recargas",
+              "api/users"
+            ]
+          },
+          {
+            "group": "Data Models",
+            "pages": [
+              "api/data-models"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Point-of-Sale (POS) interface with cart, barcode search, and multi-payment methods (cash, QR, transfer)",
+    "Full inventory management: products, categories, purchase orders, and low-stock alerts",
+    "Cash register lifecycle: open/close shifts, internal movements (income/expense), and shift balancing",
+    "Mobile top-up (recargas) module for Tigo, Entel, and Viva operators with wholesaler injection support",
+    "Banking agent transaction module (BCP, Tigo Money, etc.) for deposits, withdrawals, and QR transfers",
+    "Role-based access control (Administrador / Cajero) with JWT authentication and 45-minute inactivity timeout",
+    "PDF report generation: cash movements, sales range, purchase history, inventory, and operator productivity",
+    "Real-time data sync via Socket.IO (product/sale change events broadcast to all connected clients)",
+    "Dashboard with ApexCharts: sales metrics, monthly target gauge, recargas donut chart, and demographic map"
+  ],
+  "publicApiSurface": [
+    "POST /auth/login",
+    "POST /auth/refresh_token",
+    "POST /auth/reset/code",
+    "POST /auth/confirm-code",
+    "POST /auth/reset-confirm",
+    "GET /inventario/categorias",
+    "POST /inventario/categorias",
+    "PATCH /inventario/categorias/:id",
+    "DELETE /inventario/categorias/:id",
+    "GET /inventario/producto",
+    "POST /inventario/producto",
+    "PATCH /inventario/producto/:id",
+    "DELETE /inventario/producto/:id",
+    "GET /cajas",
+    "POST /cajas",
+    "POST /cajas/abrir",
+    "PATCH /cajas/sesion/:id/cerrar",
+    "POST /cajas/movimiento",
+    "GET /ventas",
+    "POST /ventas",
+    "PATCH /ventas/:id",
+    "GET /compras",
+    "POST /compras",
+    "GET /agentes",
+    "POST /agentes",
+    "DELETE /agentes/:id",
+    "GET /usuario",
+    "POST /usuario/register",
+    "PATCH /usuario/:id",
+    "GET /persona",
+    "POST /persona",
+    "PUT /persona",
+    "POST /mail"
+  ]
+}

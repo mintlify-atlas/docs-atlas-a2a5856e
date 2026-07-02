@@ -1,20 +1,79 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Kantuta POS: Modern Point-of-Sale for Commerce & Banking"
+sidebarTitle: "Home"
+description: "Kantuta POS is a full-featured React + TypeScript POS frontend for managing sales, inventory, cash registers, mobile top-ups, and banking agent operations."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Kantuta POS is a modern, role-aware point-of-sale frontend built with React 19 and TypeScript. It connects to a NestJS REST API to centralize retail commerce and banking correspondent operations on a single platform — from ringing up sales and tracking stock to processing mobile top-ups and bank agent transactions.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Clone the repo, configure your API URL, and run the dev server in minutes.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Environment variables, API base URL setup, and environment-specific builds.
+  </Card>
+  <Card title="Core Modules" icon="grid-2" href="/modules/inventory">
+    Explore Inventory, Sales POS, Cash Registers, Recargas, and Agent modules.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Full REST API endpoint reference with request/response schemas and examples.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What's Inside
+
+Kantuta POS is organized into focused business modules, each with its own service layer, TypeScript interfaces, and React components:
+
+<CardGroup cols={3}>
+  <Card title="Inventory" icon="box" href="/modules/inventory">
+    Products, categories, purchase orders, barcode search, and low-stock alerts.
+  </Card>
+  <Card title="Sales & POS" icon="cart-shopping" href="/modules/sales-pos">
+    Cart management, multi-payment methods, real-time stock sync via Socket.IO.
+  </Card>
+  <Card title="Cash Registers" icon="cash-register" href="/modules/cash-registers">
+    Open/close shifts, internal movements, and balance reconciliation.
+  </Card>
+  <Card title="Recargas" icon="mobile" href="/modules/recargas">
+    Mobile top-ups for Tigo, Entel, and Viva with wholesale injection support.
+  </Card>
+  <Card title="Banking Agents" icon="building-columns" href="/modules/agents">
+    BCP/Tigo Money deposits, withdrawals, and QR transfers.
+  </Card>
+  <Card title="Reports" icon="file-chart-column" href="/admin/reports">
+    PDF reports: cash movements, sales, purchases, inventory, and productivity.
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/Eleazarguitar18/kantuta_pos_front.git
+    cd kantuta_pos_front
+    ```
+  </Step>
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+  </Step>
+  <Step title="Configure the API URL">
+    Create a `.env` file at the project root:
+    ```env
+    VITE_API_URL=http://localhost:3000/api
+    ```
+  </Step>
+  <Step title="Start the development server">
+    ```bash
+    npm run dev
+    ```
+    The app will be available at `http://localhost:5173`.
+  </Step>
+</Steps>
+
+<Note>
+  Kantuta POS is designed to run on **Debian 12** but works on any platform that supports Node.js 18+. See the [Configuration guide](/configuration) for environment-specific setup details.
+</Note>

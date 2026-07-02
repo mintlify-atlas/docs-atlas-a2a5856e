@@ -1,0 +1,368 @@
+---
+title: "Categories API: Create, List, Update, and Delete"
+sidebarTitle: "Categories"
+description: "Manage product categories in Kantuta POS. Create, retrieve, update, and soft-delete categories that group your inventory items."
+---
+
+Categories are the top-level grouping for all inventory items in Kantuta POS. Every product must belong to a category, so managing categories is a prerequisite for building out your product catalog. All routes require a valid **Bearer Token JWT** in the `Authorization` header. The list endpoint automatically filters out inactive (soft-deleted) categories, so only records with `estado: true` are returned.
+
+## Interface Reference
+
+```typescript
+// Base audit fields shared by all entities
+export interface BaseEntityAudit {
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string; // ISO Date String
+  updated_at: string; // ISO Date String
+}
+
+export interface Categoria extends BaseEntityAudit {
+  id: number;
+  nombre: string;
+  productos?: Producto[]; // Populated when fetching by ID
+}
+```
+
+---
+
+## GET /inventario/categorias
+
+Returns the list of all **active** categories. Inactive (soft-deleted) categories are automatically excluded from this response.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier for the category.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Display name of the category (max 100 characters).
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active flag. Always `true` in list responses (inactive records are filtered out).
+</ResponseField>
+
+<ResponseField name="id_user_create" type="number | null" required>
+  ID of the user who created this category.
+</ResponseField>
+
+<ResponseField name="id_user_update" type="number | null">
+  ID of the last user to update this category.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 timestamp of when the category was created.
+</ResponseField>
+
+<ResponseField name="updated_at" type="string" required>
+  ISO 8601 timestamp of the last update.
+</ResponseField>
+
+<ResponseField name="productos" type="Producto[]">
+  Array of products belonging to this category. Only populated when fetching by ID.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/inventario/categorias \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Categoria } from "./types";
+
+const getCategories = async (): Promise<Categoria[]> => {
+  const response = await axios.get<Categoria[]>(
+    "http://localhost:3000/inventario/categorias",
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## POST /inventario/categorias
+
+Creates a new category and returns the saved object.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Request Body
+
+<ParamField body="nombre" type="string" required>
+  Name of the category. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="id_user_create" type="number" required>
+  ID of the authenticated user performing the creation. Used for audit tracking.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Auto-generated unique identifier assigned to the new category.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Name of the newly created category.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Defaults to `true` on creation.
+</ResponseField>
+
+<ResponseField name="id_user_create" type="number | null" required>
+  Echoes back the user ID that created the record.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 timestamp of creation.
+</ResponseField>
+
+<ResponseField name="updated_at" type="string" required>
+  ISO 8601 timestamp (equals `created_at` on initial save).
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request POST \
+  --url http://localhost:3000/inventario/categorias \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "nombre": "Bebidas",
+    "id_user_create": 1
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Categoria } from "./types";
+
+interface CrearCategoriaRequest {
+  nombre: string;
+  id_user_create: number;
+}
+
+const createCategory = async (
+  data: CrearCategoriaRequest
+): Promise<Categoria> => {
+  const response = await axios.post<Categoria>(
+    "http://localhost:3000/inventario/categorias",
+    data,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## GET /inventario/categorias/:id
+
+Fetches a single category by its numeric ID. The response includes the `productos` array with all products associated with that category.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the category to retrieve.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the category.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Display name of the category.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Whether the category is active.
+</ResponseField>
+
+<ResponseField name="productos" type="Producto[]">
+  Products that belong to this category.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<ResponseField name="updated_at" type="string" required>
+  ISO 8601 last-update timestamp.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/inventario/categorias/3 \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Categoria } from "./types";
+
+const getCategoryById = async (id: number): Promise<Categoria> => {
+  const response = await axios.get<Categoria>(
+    `http://localhost:3000/inventario/categorias/${id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## PATCH /inventario/categorias/:id
+
+Partially updates an existing category. Only the fields you include in the request body are changed; omitted fields retain their current values.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the category to update.
+</ParamField>
+
+### Request Body
+
+<ParamField body="nombre" type="string">
+  New display name for the category. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="id_user_update" type="number">
+  ID of the authenticated user performing the update. Used for audit tracking.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the updated category.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Updated name of the category.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active status of the category.
+</ResponseField>
+
+<ResponseField name="id_user_update" type="number | null">
+  ID of the user who performed this update.
+</ResponseField>
+
+<ResponseField name="updated_at" type="string" required>
+  ISO 8601 timestamp reflecting the time of this update.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request PATCH \
+  --url http://localhost:3000/inventario/categorias/3 \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "nombre": "Bebidas y Refrescos",
+    "id_user_update": 1
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Categoria } from "./types";
+
+interface ActualizarCategoriaRequest {
+  nombre?: string;
+  id_user_update?: number;
+}
+
+const updateCategory = async (
+  id: number,
+  data: ActualizarCategoriaRequest
+): Promise<Categoria> => {
+  const response = await axios.patch<Categoria>(
+    `http://localhost:3000/inventario/categorias/${id}`,
+    data,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## DELETE /inventario/categorias/:id
+
+Deactivates a category by setting its `estado` field to `false`. The record is **not** permanently removed from the database.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+<Note>
+  This is a **soft delete**. The category record is preserved in the database with `estado` set to `false`. It will no longer appear in the `GET /inventario/categorias` list, but historical references from products are maintained for data integrity.
+</Note>
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the category to deactivate.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl --request DELETE \
+  --url http://localhost:3000/inventario/categorias/3 \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+
+const deleteCategory = async (id: number): Promise<void> => {
+  await axios.delete(
+    `http://localhost:3000/inventario/categorias/${id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+};
+```
+</CodeGroup>

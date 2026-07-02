@@ -1,47 +1,143 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with Kantuta POS in 5 minutes"
+sidebarTitle: "Quickstart"
+description: "Install Kantuta POS, connect it to your NestJS backend, and complete your first sale — from git clone to a rung-up transaction in five minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This guide walks you through cloning Kantuta POS, installing dependencies, pointing the app at your NestJS backend, and logging in for the first time. By the end you will have a running development server, an open cash session, and a completed sale.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+<Warning>
+  Kantuta POS has **no embedded backend**. Every authentication call, product lookup, and sale depends on a running NestJS REST API. Make sure your backend is up and reachable before starting the development server, or the login screen will return network errors.
+</Warning>
 
 ## Prerequisites
 
-Before you begin, you must have:
+Before you begin, confirm the following are available on your machine:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+- **Node.js 18 or later** — Vite 6 and React 19 both require it. Run `node -v` to check.
+- **npm 9+** (bundled with Node 18) — or Yarn / pnpm if you prefer.
+- **Git** — to clone the repository.
+- **A running NestJS backend** — exposing a REST API (default: `http://localhost:3000`). The frontend expects JWT-based auth endpoints and the full Kantuta API surface.
 
-## Get started
+---
+
+## Full setup walkthrough
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
-
+  <Step title="Clone the repository">
     ```bash
-    npm install your-package
+    git clone <url-del-repositorio> kantuta_pos_front
+    cd kantuta_pos_front
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
-    ```
+  <Step title="Install dependencies">
+    Choose your package manager. All three produce an identical `node_modules` from the lockfile.
+
+    <CodeGroup>
+      ```bash npm
+      npm install
+      ```
+
+      ```bash yarn
+      yarn install
+      ```
+
+      ```bash pnpm
+      pnpm install
+      ```
+    </CodeGroup>
+
+    The install pulls ~40 packages including React 19, Vite 6, Axios, Socket.IO Client, ApexCharts, and `@react-pdf/renderer`.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
+  <Step title="Create your .env file">
+    Copy the example below into a new file named `.env` at the project root. Replace the value with the actual URL of your running NestJS API:
+
+    ```env .env
+    VITE_API_BASE_URL=http://localhost:3000
     ```
+
+    `VITE_API_BASE_URL` is consumed in two places:
+
+    - **`src/components/auth/services/urlBase.ts`** — exports `API_BASE_URL` used by every Axios service.
+    - **`src/context/SocketContext.tsx`** — strips the `/api` suffix and opens a Socket.IO connection to the same host.
+
+    <Tip>
+      If your backend serves the REST API at a sub-path (e.g. `/api`), set the full base URL without a trailing slash: `VITE_API_BASE_URL=http://localhost:3000`. Each service file appends its own `/api/...` path segments.
+    </Tip>
+  </Step>
+
+  <Step title="Start the development server">
+    ```bash
+    npm run dev
+    ```
+
+    Vite starts the HMR dev server — usually at **`http://localhost:5173`** — and prints the exact URL in the terminal. Open that address in your browser.
+  </Step>
+
+  <Step title="Sign in">
+    The app redirects unauthenticated visitors to **`/signin`** automatically (handled by `ProtectedRoute`).
+
+    1. Enter the username and password for an existing backend user.
+    2. On success, `AuthContext` stores the JWT access token, refresh token, and user object in `localStorage` and redirects you to the dashboard (`/`).
+
+    Two roles are available:
+
+    | Role | Access level |
+    |---|---|
+    | `Administrador` | Full access to all modules including Reportes, user management, and register configuration |
+    | `Cajero` | Dashboard, POS terminal, Cajas control, Recargas operations, and Agentes |
+  </Step>
+
+  <Step title="Open a cash session">
+    Before processing any sale, a cash register session must be active:
+
+    1. Navigate to **Cajas** in the sidebar.
+    2. Click the **Control** button on the register assigned to your workstation.
+    3. Select **Abrir Caja**, enter the opening cash amount, and confirm.
+
+    The `CajaContext` provider makes the active session available to the POS terminal and all sale-recording components.
+  </Step>
+
+  <Step title="Ring up your first sale">
+    1. Go to **Ventas → Punto de Venta** (`/ventas/pos`).
+    2. Search for a product by name or scan its barcode.
+    3. Adjust quantity, then click **Registrar Venta**.
+    4. The sale is persisted via the NestJS API and appears immediately in **Ventas** history.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+---
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+## Available npm scripts
+
+These are the scripts defined in `package.json`:
+
+| Script | Command | Purpose |
+|---|---|---|
+| `dev` | `vite` | Start the Vite HMR development server |
+| `build` | `tsc -b && vite build` | Type-check then compile an optimised production bundle to `dist/` |
+| `preview` | `vite preview` | Serve the production build locally to verify it before deploying |
+| `lint` | `eslint .` | Run ESLint across the entire `src/` tree |
+
+```bash
+# Development
+npm run dev
+
+# Production build
+npm run build
+
+# Preview the production build locally
+npm run preview
+```
+
+---
+
+## What's next?
+
+With the app running, explore the rest of the documentation to understand how each module works and how to tune the application for a production deployment.
+
+- [Configuration](/configuration) — environment variables, build modes, and session settings.
+- [Inventory module](/modules/inventory) — add products and categories before going live.
+- [Sales & POS module](/modules/sales-pos) — customise the POS terminal layout.

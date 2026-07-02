@@ -1,0 +1,295 @@
+---
+title: "User Management and Role-Based Access Control"
+sidebarTitle: "Users & Roles"
+description: "Manage system accounts, assign roles, and control route-level access for Administrador and Cajero users in Kantuta POS."
+---
+
+Kantuta POS enforces a two-tier role hierarchy: **Administrador** and **Cajero**. Every authenticated request carries a JWT that encodes the user's role, and the `ProtectedRoute` component intercepts navigation at the router level before any protected view renders. Administrators can create and edit user accounts through the `/administracion/usuarios` module; cashiers have no access to any administration routes.
+
+## Roles and Capabilities
+
+The system defines two roles stored in the `role.nombre` field of every `Usuario` object:
+
+| Capability | Administrador | Cajero |
+|---|:---:|:---:|
+| Access `/administracion` routes | ✅ | ❌ |
+| Access `/reportes` routes | ✅ | ❌ |
+| Product CRUD (`/inventario/productos`) | ✅ | ❌ |
+| Category CRUD (`/inventario/categorias`) | ✅ | ❌ |
+| Register & edit cash drawers (`/cajas`) | ✅ | ❌ |
+| View product and category lists | ✅ | ✅ |
+| Open / close own caja session | ✅ | ✅ |
+| Operate the Point of Sale (`/ventas/pos`) | ✅ | ✅ |
+| Mobile top-up operations (`/recargas`) | ✅ | ✅ |
+| WhatsApp agent operations (`/whatsapp`) | ✅ | ✅ |
+
+<Note>
+  Role names are matched **case-insensitively** and with leading/trailing whitespace trimmed. The route guard normalizes both the user's role and the `allowedRoles` array to lowercase before comparing, so `"Administrador"`, `"administrador"`, and `"ADMINISTRADOR"` are all treated as the same role.
+</Note>
+
+## TypeScript Interfaces
+
+The core data shapes for users and roles are defined across two files.
+
+<Tabs>
+  <Tab title="Usuario (domain model)">
+    ```typescript
+    // src/modules/Administracion/Usuarios/interfaces/Usuario.ts
+
+    export interface Role {
+      id: number;
+      nombre: "admin" | "user" | string;
+      descripcion?: string;
+    }
+
+    export interface Persona extends BaseEntityAudit {
+      id: number;
+      nombres: string;
+      p_apellido: string;
+      s_apellido?: string;
+      fecha_nacimiento: string;
+      genero: string;
+    }
+
+    export interface Usuario extends BaseEntityAudit {
+      id: number;
+      name: string;
+      email: string;
+      persona: Persona;
+      role: Role;
+    }
+    ```
+  </Tab>
+  <Tab title="Auth types">
+    ```typescript
+    // src/modules/Administracion/Usuarios/types/auth.type.ts
+
+    export interface User {
+      id: number;
+      name: string;
+      email: string;
+      estado: boolean;
+      role: UserRole | string | null;
+      persona: UserPersona;
+    }
+
+    export interface AuthResponse {
+      access_token: string;
+      refresh_token: string;
+      user: User;
+    }
+    ```
+  </Tab>
+  <Tab title="Registration DTO">
+    ```typescript
+    // src/modules/Administracion/Usuarios/interfaces/UsuarioDTO.ts
+
+    export interface RegisterUsuarioRequest {
+      email: string;
+      password?: string;
+      nombres: string;
+      p_apellido: string;
+      s_apellido?: string;
+      fecha_nacimiento: string;
+      genero: string;        // "M" | "F" | "O"
+      name?: string;         // username / display name
+      estado?: boolean;
+      id_role?: number;
+    }
+
+    export interface UpdateUsuarioRequest {
+      name?: string;
+      email?: string;
+      password?: string;
+      estado?: boolean;
+      id_role?: number;
+    }
+
+    export interface UpdatePersonaRequest {
+      id: number;
+      id_user_update: number;
+      nombres?: string;
+      p_apellido?: string;
+      s_apellido?: string;
+      fecha_nacimiento?: string;
+      genero?: string;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## User Registration
+
+Creating a new account is a two-step form that groups fields into **account credentials** and **personal data**. Required fields are `email`, `password`, `nombres`, and `p_apellido`; all others are optional.
+
+<Steps>
+  <Step title="Navigate to the registration form">
+    From the user list at `/administracion/usuarios`, click **Nuevo Usuario**. The app navigates to `/administracion/usuarios/registrar`.
+  </Step>
+  <Step title="Fill in account credentials">
+    | Field | Type | Required | Notes |
+    |---|---|:---:|---|
+    | `email` | `string` | ✅ | Must be a valid e-mail address |
+    | `password` | `string` | ✅ | Plain text — hashed server-side |
+    | `name` | `string` | ❌ | Username / display handle (e.g. `jdoe99`) |
+    | `id_role` | `number` | ❌ | ID of the role fetched from `GET /auth/roles/list` |
+  </Step>
+  <Step title="Fill in personal data">
+    | Field | Type | Required | Notes |
+    |---|---|:---:|---|
+    | `nombres` | `string` | ✅ | Given names |
+    | `p_apellido` | `string` | ✅ | First (paternal) surname |
+    | `s_apellido` | `string` | ❌ | Second (maternal) surname |
+    | `fecha_nacimiento` | `string` | ❌ | ISO date — `YYYY-MM-DD` |
+    | `genero` | `string` | ❌ | `"M"` · `"F"` · `"O"` |
+  </Step>
+  <Step title="Submit">
+    Click **Crear Usuario**. On HTTP 200/201 the app shows a success alert and redirects back to the user list after 2 seconds. On error, an error alert is displayed for 5 seconds.
+  </Step>
+</Steps>
+
+The registration form calls `UsuariosService.registerUsuario(data)`, which posts to `POST /usuario/register` with a `Bearer` token attached:
+
+```typescript
+// src/modules/Administracion/Usuarios/services/usuariosService.ts
+
+export const UsuariosService = {
+  async registerUsuario(data: RegisterUsuarioRequest) {
+    return await axios.post(`${API_BASE_URL}/usuario/register`, data, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    });
+  },
+  // ...
+};
+```
+
+## Route Map
+
+| Route | Component | Access |
+|---|---|---|
+| `/administracion/usuarios` | `UsuariosMain` | Administrador |
+| `/administracion/usuarios/registrar` | `UsuariosRegister` | Administrador |
+| `/administracion/usuarios/editar/:id` | `UserProfiles` | Administrador |
+
+## Route Guard: ProtectedRoute
+
+Every sensitive sub-tree is wrapped in a `<ProtectedRoute allowedRoles={[...]} />` outlet. The component:
+
+1. Redirects unauthenticated visitors to `/signin`.
+2. Extracts `role.nombre` (or `role.name` as a fallback) from the stored `user` object.
+3. Normalizes both sides to lowercase and checks inclusion against `allowedRoles`.
+4. Redirects unauthorized users to `/` without rendering the target view.
+
+```tsx
+// src/router/ProtectedRoute.tsx
+
+export default function ProtectedRoute({ allowedRoles }: { allowedRoles?: string[] }) {
+  const { isAuthenticated, user } = useAuth();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/signin" replace />;
+  }
+
+  if (allowedRoles && user) {
+    const userRaw = user as any;
+    const roleObject = userRaw.role || userRaw.Role;
+    let roleName = "";
+
+    if (roleObject) {
+      roleName =
+        typeof roleObject === "object"
+          ? roleObject.nombre || roleObject.name || ""
+          : roleObject;
+    }
+
+    if (!roleName && userRaw.roleName) roleName = userRaw.roleName;
+
+    const normalizedRole = roleName.toLowerCase().trim();
+    const normalizedAllowed = allowedRoles.map((r) => r.toLowerCase().trim());
+
+    if (!normalizedAllowed.includes(normalizedRole)) {
+      return <Navigate to="/" replace />;
+    }
+  }
+
+  return <Outlet />;
+}
+```
+
+Usage in the router for the `/administracion` subtree:
+
+```tsx
+<Route path="/administracion">
+  <Route path="usuarios" element={<ProtectedRoute allowedRoles={['Administrador']} />}>
+    <Route index element={<UsuariosMain />} />
+    <Route path="registrar" element={<UsuariosRegister />} />
+    <Route path="editar/:id" element={<UserProfiles />} />
+  </Route>
+</Route>
+```
+
+## JWT Token Storage
+
+After a successful login, `AuthContext.loginStorage()` persists three keys to `localStorage`:
+
+| Key | Value |
+|---|---|
+| `access_token` | Short-lived JWT used in `Authorization: Bearer` headers |
+| `refresh_token` | Long-lived token for silent re-authentication |
+| `user` | Full `User` object serialized as a JSON string |
+
+On page load, the context re-hydrates from `localStorage` and immediately validates the `access_token` expiry claim (`payload.exp`). If the token has already expired, all three keys are removed and the user is treated as unauthenticated.
+
+```typescript
+// src/context/auth/AuthContext.tsx (excerpt)
+
+const loginStorage = (newToken: string, refreshToken: string, newUser: User) => {
+  setToken(newToken);
+  setUser(newUser);
+  localStorage.setItem("access_token", newToken);
+  localStorage.setItem("refresh_token", refreshToken);
+  localStorage.setItem("user", JSON.stringify(newUser));
+};
+```
+
+## Inactivity Auto-Logout
+
+<Warning>
+  **Sessions expire automatically after 45 minutes of inactivity.** The timer resets on any `mousemove`, `keydown`, `scroll`, or `click` event. If no interaction is detected for the full 45 minutes, `logoutStorage()` is called unconditionally — all tokens are cleared from `localStorage` and the browser is redirected to `/signin`. Any unsaved work in open forms (such as an in-progress sale or purchase entry) will be lost. Users should save drafts frequently or keep the interface active.
+</Warning>
+
+The timeout is implemented as a `useRef`-backed `setTimeout` in `AuthContextProvider`:
+
+```typescript
+// src/context/auth/AuthContext.tsx (excerpt)
+
+useEffect(() => {
+  const resetTimer = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current as any);
+    timeoutRef.current = setTimeout(() => {
+      logoutStorage();
+    }, 45 * 60 * 1000); // 45 minutes
+  };
+
+  resetTimer();
+
+  const events = ["mousemove", "keydown", "scroll", "click"];
+  events.forEach((evt) => window.addEventListener(evt, resetTimer));
+
+  return () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current as any);
+    events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+  };
+}, []);
+```
+
+## Editing an Existing User
+
+To modify an existing account, click **Ver/Editar Perfil** on any row in the user list. The app navigates to `/administracion/usuarios/editar/:id` and passes the full `Usuario` object as `location.state`. Account updates are sent via `PATCH /usuario/:id` and personal data changes via `PUT /persona`.
+
+<Tip>
+  The `estado` flag (active/inactive) on a `Usuario` is controlled through `UpdateUsuarioRequest`. Setting `estado: false` effectively disables the account — the user can no longer log in but their record and associated sales history are preserved.
+</Tip>

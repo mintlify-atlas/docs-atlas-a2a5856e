@@ -1,0 +1,470 @@
+---
+title: "Products API: Inventory CRUD and Stock Management"
+sidebarTitle: "Products"
+description: "Create and manage inventory products in Kantuta POS, including barcode, pricing, stock levels, and category associations."
+---
+
+Products are the core of the Kantuta POS inventory system. Each product tracks its sale price, purchase cost, current stock, minimum stock threshold, and the category it belongs to. All routes require a valid **Bearer Token JWT** in the `Authorization` header. The list endpoint returns only active products with the `categoria` object pre-loaded, so you have everything you need to display a full product listing without a second request.
+
+<Note>
+  The `stock_actual` field is decremented **automatically** by the backend when a sale is created via `POST /ventas`. You should not manually subtract stock when recording a sale — only update `stock_actual` directly via `PATCH /inventario/producto/:id` for manual inventory adjustments such as corrections or writeoffs.
+</Note>
+
+## Interface Reference
+
+```typescript
+export interface Categoria {
+  id?: number;
+  nombre: string;
+  estado: boolean;
+  id_user_create: number | null;
+  id_user_update?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Producto {
+  id?: number;
+  nombre: string;
+  codigo_barras?: string | null;
+  precio_venta: number;
+  costo_compra: number;
+  stock_actual: number;
+  stock_minimo: number;
+  id_categoria: number;
+  categoria?: Categoria; // Pre-loaded on list and single-item responses
+  id_user_create?: number;
+  id_user_update?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+```
+
+---
+
+## GET /inventario/producto
+
+Returns all active products. Each item in the array includes the full `categoria` object, so you can display category information without additional requests.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier for the product.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Display name of the product.
+</ResponseField>
+
+<ResponseField name="codigo_barras" type="string | null">
+  Barcode string for the product, or `null` if not assigned.
+</ResponseField>
+
+<ResponseField name="precio_venta" type="number" required>
+  Retail sale price. Must be `>= 0`.
+</ResponseField>
+
+<ResponseField name="costo_compra" type="number" required>
+  Unit purchase cost. Must be `>= 0`. Updated automatically when a purchase is recorded.
+</ResponseField>
+
+<ResponseField name="stock_actual" type="number" required>
+  Current units in stock. Decremented on each sale; incremented on each purchase.
+</ResponseField>
+
+<ResponseField name="stock_minimo" type="number" required>
+  Minimum stock threshold. Use this to trigger low-stock alerts in the UI.
+</ResponseField>
+
+<ResponseField name="id_categoria" type="number" required>
+  Foreign key referencing the parent category.
+</ResponseField>
+
+<ResponseField name="categoria" type="Categoria" required>
+  The full category object associated with this product.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active flag. Only `true` records are returned by this endpoint.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<ResponseField name="updated_at" type="string" required>
+  ISO 8601 last-update timestamp.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/inventario/producto \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Producto } from "./types";
+
+const getProducts = async (): Promise<Producto[]> => {
+  const response = await axios.get<Producto[]>(
+    "http://localhost:3000/inventario/producto",
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## POST /inventario/producto
+
+Creates a new product in the inventory and returns the saved object with the `categoria` relation populated.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Request Body
+
+<ParamField body="nombre" type="string" required>
+  Display name of the product.
+</ParamField>
+
+<ParamField body="codigo_barras" type="string">
+  Optional barcode string. Omit or pass `null` if the product has no barcode.
+</ParamField>
+
+<ParamField body="precio_venta" type="number" required>
+  Retail sale price per unit. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="costo_compra" type="number" required>
+  Unit purchase cost. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="stock_actual" type="number" required>
+  Starting stock quantity. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="stock_minimo" type="number" required>
+  Minimum stock level before a low-stock alert is triggered. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="id_categoria" type="number" required>
+  ID of an existing active category to associate with this product.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Auto-generated unique identifier.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Name of the newly created product.
+</ResponseField>
+
+<ResponseField name="categoria" type="Categoria" required>
+  The populated category object matching `id_categoria`.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Defaults to `true` on creation.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request POST \
+  --url http://localhost:3000/inventario/producto \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "nombre": "Coca-Cola 500ml",
+    "codigo_barras": "7750414101219",
+    "precio_venta": 5.50,
+    "costo_compra": 3.20,
+    "stock_actual": 100,
+    "stock_minimo": 10,
+    "id_categoria": 2
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Producto } from "./types";
+
+interface CrearProductoRequest {
+  nombre: string;
+  codigo_barras?: string;
+  precio_venta: number;
+  costo_compra: number;
+  stock_actual: number;
+  stock_minimo: number;
+  id_categoria: number;
+}
+
+const createProduct = async (
+  data: CrearProductoRequest
+): Promise<Producto> => {
+  const user = JSON.parse(localStorage.getItem("user") ?? "{}");
+  const response = await axios.post<Producto>(
+    "http://localhost:3000/inventario/producto",
+    { ...data, id_user_create: user.id },
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## GET /inventario/producto/:id
+
+Fetches a single product by its numeric ID, including the `categoria` relation.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the product to retrieve.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the product.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Display name of the product.
+</ResponseField>
+
+<ResponseField name="codigo_barras" type="string | null">
+  Barcode value or `null`.
+</ResponseField>
+
+<ResponseField name="precio_venta" type="number" required>
+  Current retail price.
+</ResponseField>
+
+<ResponseField name="costo_compra" type="number" required>
+  Current unit cost.
+</ResponseField>
+
+<ResponseField name="stock_actual" type="number" required>
+  Units currently in stock.
+</ResponseField>
+
+<ResponseField name="stock_minimo" type="number" required>
+  Minimum stock threshold.
+</ResponseField>
+
+<ResponseField name="categoria" type="Categoria" required>
+  The full parent category object.
+</ResponseField>
+
+<ResponseField name="estado" type="boolean" required>
+  Active status of the product.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request GET \
+  --url http://localhost:3000/inventario/producto/7 \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Producto } from "./types";
+
+const getProductById = async (id: number): Promise<Producto> => {
+  const response = await axios.get<Producto>(
+    `http://localhost:3000/inventario/producto/${id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## PATCH /inventario/producto/:id
+
+Partially updates a product. All fields are optional — only the fields you include will be modified. Useful for correcting pricing, adjusting stock, or reassigning a category.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the product to update.
+</ParamField>
+
+### Request Body
+
+<ParamField body="nombre" type="string">
+  Updated display name for the product.
+</ParamField>
+
+<ParamField body="codigo_barras" type="string">
+  Updated barcode string.
+</ParamField>
+
+<ParamField body="precio_venta" type="number">
+  Updated retail price. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="costo_compra" type="number">
+  Updated unit purchase cost. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="stock_actual" type="number">
+  Manually override the current stock level. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="stock_minimo" type="number">
+  Updated minimum stock threshold. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="id_categoria" type="number">
+  ID of the new category to assign to this product.
+</ParamField>
+
+<ParamField body="id_user_update" type="number">
+  ID of the authenticated user performing this update. Used for audit tracking.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="number" required>
+  Unique identifier of the updated product.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Current name after the update.
+</ResponseField>
+
+<ResponseField name="precio_venta" type="number" required>
+  Current sale price after the update.
+</ResponseField>
+
+<ResponseField name="stock_actual" type="number" required>
+  Current stock level after the update.
+</ResponseField>
+
+<ResponseField name="updated_at" type="string" required>
+  ISO 8601 timestamp of this update.
+</ResponseField>
+
+<CodeGroup>
+```bash curl
+curl --request PATCH \
+  --url http://localhost:3000/inventario/producto/7 \
+  --header "Authorization: Bearer <access_token>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "precio_venta": 6.00,
+    "stock_minimo": 15,
+    "id_user_update": 1
+  }'
+```
+
+```typescript TypeScript
+import axios from "axios";
+import { Producto } from "./types";
+
+interface ActualizarProductoRequest {
+  nombre?: string;
+  codigo_barras?: string;
+  precio_venta?: number;
+  costo_compra?: number;
+  stock_actual?: number;
+  stock_minimo?: number;
+  id_categoria?: number;
+  id_user_update?: number;
+}
+
+const updateProduct = async (
+  id: number,
+  data: ActualizarProductoRequest
+): Promise<Producto> => {
+  const user = JSON.parse(localStorage.getItem("user") ?? "{}");
+  const response = await axios.patch<Producto>(
+    `http://localhost:3000/inventario/producto/${id}`,
+    { ...data, id_user_update: user.id },
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+## DELETE /inventario/producto/:id
+
+Deactivates a product by setting its `estado` field to `false`. The record is **not** permanently removed from the database.
+
+**Authentication:** Required — `Authorization: Bearer <access_token>`
+
+<Note>
+  This is a **soft delete**. The product record is kept in the database with `estado` set to `false`. It will no longer appear in the `GET /inventario/producto` list, but existing sale and purchase records that reference this product are unaffected.
+</Note>
+
+### Path Parameters
+
+<ParamField path="id" type="number" required>
+  The unique identifier of the product to deactivate.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl --request DELETE \
+  --url http://localhost:3000/inventario/producto/7 \
+  --header "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import axios from "axios";
+
+const deleteProduct = async (id: number): Promise<void> => {
+  await axios.delete(
+    `http://localhost:3000/inventario/producto/${id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+      },
+    }
+  );
+};
+```
+</CodeGroup>

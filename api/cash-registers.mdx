@@ -1,0 +1,440 @@
+---
+title: "Cash Registers API: Sessions, Movements, and Reconciliation"
+sidebarTitle: "Cash Registers"
+description: "Manage physical cash registers, open and close cashier sessions, track internal movements, and run end-of-shift reconciliation via the Kantuta POS API."
+---
+
+The Cash Registers module is the backbone of every cashier shift in Kantuta POS. A **Caja** (physical register) holds configuration like its name and operational specialty. A **SesionCaja** represents a single cashier turn — it opens with a declared starting balance and closes with a physical count. When the session closes, the backend automatically computes `monto_final_teorico` from all tracked movements and derives the `diferencia` for reconciliation. **MovimientoCaja** records any ad-hoc cash in-flows or out-flows during the session.
+
+---
+
+## TypeScript Interfaces
+
+```typescript
+export interface Caja extends BaseEntityAudit {
+  id: number;
+  nombre: string;
+  especialidad: "SOLO_VENTAS" | "SOLO_AGENTES" | "MIXTA";
+  sesiones?: SesionCaja[];
+  saldo: number;
+}
+
+export interface SesionCaja extends BaseEntityAudit {
+  id: number;
+  monto_inicial: number;
+  monto_final_teorico: number | null; // Computed by backend on close
+  monto_final_real: number | null;    // Submitted by cashier on close
+  diferencia: number | null;          // monto_final_real - monto_final_teorico
+  estado_sesion: "ABIERTA" | "CERRADA";
+  fecha_apertura: string;             // ISO Date String
+  fecha_cierre: string | null;        // ISO Date String
+  id_caja: number;
+  caja?: Caja;
+  id_usuario: number;
+}
+
+export interface MovimientoCaja extends BaseEntityAudit {
+  id: number;
+  tipo: "INGRESO" | "EGRESO";
+  monto: number;
+  motivo: string;
+  fecha: string; // ISO Date String
+  id_sesion_caja: number;
+}
+```
+
+---
+
+## Endpoints
+
+### List All Cajas
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/cajas \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Caja } from "./types";
+
+export const getCajas = async (): Promise<Caja[]> => {
+  const response = await api.get<Caja[]>("/cajas");
+  return response.data;
+};
+```
+</CodeGroup>
+
+**`GET /cajas`** — Returns all active cash register records. Inactive registers (soft-deleted) are filtered automatically.
+
+**Response:** `Caja[]`
+
+---
+
+### Create a Caja
+
+**`POST /cajas`** — Creates a new physical cash register.
+
+<ParamField body="nombre" type="string" required>
+  Display name for the register. Minimum 3 characters.
+</ParamField>
+
+<ParamField body="especialidad" type="string" required>
+  Determines which operations the register accepts. One of: `SOLO_VENTAS`, `SOLO_AGENTES`, or `MIXTA`.
+</ParamField>
+
+<ParamField body="id_user_create" type="number">
+  ID of the user creating the record. Injected automatically by the frontend service from the logged-in user's session.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/cajas \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Caja Principal",
+    "especialidad": "MIXTA",
+    "id_user_create": 1
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Caja, CrearCajaRequest } from "./types";
+
+export const createCaja = async (data: CrearCajaRequest): Promise<Caja> => {
+  const response = await api.post<Caja>("/cajas", data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Caja`
+
+---
+
+### Get Caja by ID
+
+**`GET /cajas/:id`** — Returns a single register with its full session history.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/cajas/1 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Caja } from "./types";
+
+export const getCajaById = async (id: number): Promise<Caja> => {
+  const response = await api.get<Caja>(`/cajas/${id}`);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Caja` — includes the `sesiones` array with all historical sessions.
+
+---
+
+### Update a Caja
+
+**`PATCH /cajas/:id`** — Partially updates a cash register. Accepts any subset of `CrearCajaRequest` fields.
+
+<ParamField body="nombre" type="string">
+  New display name for the register.
+</ParamField>
+
+<ParamField body="especialidad" type="string">
+  Updated specialty: `SOLO_VENTAS`, `SOLO_AGENTES`, or `MIXTA`.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.kantuta.com/cajas/1 \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "nombre": "Caja Ventas Norte" }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { Caja, CrearCajaRequest } from "./types";
+
+export const updateCaja = async (
+  id: number,
+  data: Partial<CrearCajaRequest>
+): Promise<Caja> => {
+  const response = await api.patch<Caja>(`/cajas/${id}`, data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `Caja` (updated object)
+
+---
+
+### Delete a Caja (Soft Delete)
+
+**`DELETE /cajas/:id?id_user_update=N`** — Marks the register as inactive. The record is not removed from the database.
+
+<ParamField query="id_user_update" type="number" required>
+  ID of the user performing the deletion. Required for audit trail.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X DELETE "https://api.kantuta.com/cajas/1?id_user_update=2" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+
+export const deleteCaja = async (
+  id: number,
+  idUserUpdate: number
+): Promise<void> => {
+  await api.delete(`/cajas/${id}?id_user_update=${idUserUpdate}`);
+};
+```
+</CodeGroup>
+
+**Response:** `void`
+
+---
+
+### Get Active Session for a User
+
+**`GET /cajas/sesion-activa/:userId`** — Returns the currently open session assigned to a given cashier user.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/cajas/sesion-activa/5 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+import { SesionCaja } from "./types";
+
+export const getSesionActivaUsuario = async (
+  userId: number
+): Promise<SesionCaja> => {
+  const response = await api.get<SesionCaja>(`/cajas/sesion-activa/${userId}`);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `SesionCaja` with `estado_sesion: "ABIERTA"`, or `null` if no active session exists.
+
+---
+
+### Open a Session
+
+**`POST /cajas/abrir`** — Opens a new cashier session (starts a shift). Only one session per user can be open at a time.
+
+<ParamField body="id_caja" type="number" required>
+  ID of the physical register to open.
+</ParamField>
+
+<ParamField body="monto_inicial" type="number" required>
+  The starting cash balance declared by the cashier (used as the base for theoretical reconciliation).
+</ParamField>
+
+<ParamField body="id_usuario" type="number" required>
+  ID of the cashier opening the session.
+</ParamField>
+
+<ParamField body="id_user_create" type="number" required>
+  Audit user ID (usually the same as `id_usuario`). Auto-injected by the frontend service.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/cajas/abrir \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id_caja": 1,
+    "monto_inicial": 500.00,
+    "id_usuario": 5,
+    "id_user_create": 5
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { SesionCaja, AbrirCajaRequest } from "./types";
+
+export const abrirSesion = async (
+  data: AbrirCajaRequest
+): Promise<SesionCaja> => {
+  const response = await api.post<SesionCaja>("/cajas/abrir", data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `SesionCaja` with `estado_sesion: "ABIERTA"` and a populated `fecha_apertura`.
+
+---
+
+### Close a Session (Reconciliation)
+
+**`PATCH /cajas/sesion/:id/cerrar`** — Closes an open session and triggers the backend reconciliation calculation.
+
+<ParamField body="monto_final_real" type="number" required>
+  The physical cash count performed by the cashier at end-of-shift.
+</ParamField>
+
+<ParamField body="id_user_update" type="number" required>
+  ID of the user closing the session. Auto-injected by the frontend service.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.kantuta.com/cajas/sesion/12/cerrar \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "monto_final_real": 1240.50,
+    "id_user_update": 5
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { SesionCaja, CerrarCajaRequest } from "./types";
+
+export const cerrarSesion = async (
+  idSesion: number,
+  data: CerrarCajaRequest
+): Promise<SesionCaja> => {
+  const response = await api.patch<SesionCaja>(
+    `/cajas/sesion/${idSesion}/cerrar`,
+    data
+  );
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `SesionCaja` — The returned object includes the backend-computed fields:
+
+<ResponseField name="monto_final_teorico" type="number">
+  Calculated by the backend as: `monto_inicial` + sum of all `INGRESO` movements − sum of all `EGRESO` movements recorded during the session.
+</ResponseField>
+
+<ResponseField name="diferencia" type="number">
+  Computed as `monto_final_real − monto_final_teorico`. A positive value indicates a surplus; a negative value indicates a shortage.
+</ResponseField>
+
+<ResponseField name="estado_sesion" type="string">
+  Set to `"CERRADA"` upon successful close.
+</ResponseField>
+
+<ResponseField name="fecha_cierre" type="string">
+  ISO 8601 timestamp of when the session was closed.
+</ResponseField>
+
+<Note>
+  The reconciliation formula is: **Teorico = monto_inicial + Σ INGRESOS − Σ EGRESOS**. The `diferencia` is the discrepancy between what should be in the register and what was physically counted. A value of `0.00` indicates a perfect balance.
+</Note>
+
+---
+
+### Get Session Balance
+
+**`GET /cajas/sesion/:id/balance`** — Retrieves a real-time balance summary for an open session, including all movements registered so far.
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.kantuta.com/cajas/sesion/12/balance \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```typescript TypeScript
+import api from "./api";
+
+export const getSesionBalance = async (idSesion: number) => {
+  const response = await api.get(`/cajas/sesion/${idSesion}/balance`);
+  return response.data;
+};
+```
+</CodeGroup>
+
+---
+
+### Register an Internal Movement
+
+**`POST /cajas/movimiento`** — Records an ad-hoc cash in-flow (`INGRESO`) or out-flow (`EGRESO`) within an active session. These movements are factored into the theoretical balance at close.
+
+<ParamField body="tipo" type="string" required>
+  Movement direction: `INGRESO` (cash in) or `EGRESO` (cash out).
+</ParamField>
+
+<ParamField body="monto" type="number" required>
+  Amount of the movement. Minimum value: `0.10`.
+</ParamField>
+
+<ParamField body="motivo" type="string" required>
+  Free-text justification for the movement (e.g., "Pago de servicios", "Fondo de cambio adicional").
+</ParamField>
+
+<ParamField body="id_sesion_caja" type="number" required>
+  ID of the active session to which this movement belongs.
+</ParamField>
+
+<ParamField body="id_user_create" type="number" required>
+  Audit user ID. Auto-injected by the frontend service.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.kantuta.com/cajas/movimiento \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tipo": "EGRESO",
+    "monto": 50.00,
+    "motivo": "Pago de servicio de limpieza",
+    "id_sesion_caja": 12,
+    "id_user_create": 5
+  }'
+```
+
+```typescript TypeScript
+import api from "./api";
+import { MovimientoCaja, CrearMovimientoRequest } from "./types";
+
+export const registrarMovimiento = async (
+  data: CrearMovimientoRequest
+): Promise<MovimientoCaja> => {
+  const response = await api.post<MovimientoCaja>("/cajas/movimiento", data);
+  return response.data;
+};
+```
+</CodeGroup>
+
+**Response:** `MovimientoCaja`
+
+---
+
+## Reconciliation Logic
+
+When `PATCH /cajas/sesion/:id/cerrar` is called, the backend executes the following reconciliation steps:
+
+1. **Fetch all movements** — Retrieves every `MovimientoCaja` linked to the session's `id`.
+2. **Sum inflows** — Adds all movements with `tipo: "INGRESO"`.
+3. **Sum outflows** — Adds all movements with `tipo: "EGRESO"`.
+4. **Compute theoretical balance** — `monto_final_teorico = monto_inicial + Σ INGRESOS − Σ EGRESOS`.
+5. **Compute difference** — `diferencia = monto_final_real − monto_final_teorico`.
+6. **Set session state** — `estado_sesion` is set to `"CERRADA"` and `fecha_cierre` is stamped.
+
+A `diferencia` of `0.00` means the physical count matches the system exactly. Positive values indicate a surplus (more cash than expected); negative values indicate a shortage.
